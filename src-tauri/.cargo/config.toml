@@ -1,0 +1,8 @@
+# whisper.cpp (the local speech model) is compiled for any recent x86-64 CPU (AVX2), not just
+# the build machine's, so the installer runs everywhere.
+[env]
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"

@@ -3,10 +3,12 @@ mod chat;
 mod launcher;
 mod personality;
 mod reminders;
+mod screen;
 mod settings;
 mod stats;
 mod tray;
 mod tts;
+mod voice_in;
 
 use chat::{History, Notes, RateLimiter};
 use settings::{Command, Settings};
@@ -34,6 +36,8 @@ pub struct AppState {
     notes: Mutex<Notes>,
     reminders: Mutex<reminders::Reminders>,
     thinking: AtomicBool,
+    /// The day the morning briefing was given, so it only happens once.
+    briefed: Mutex<Option<chrono::NaiveDate>>,
 }
 
 impl AppState {
@@ -117,7 +121,18 @@ fn sleep(app: AppHandle) -> Outcome {
 
 /// Asks Claude for a reply to `message`, or for an unprompted pep talk when it's None.
 /// One call at a time, and rate-limited so a chatty afternoon doesn't eat the subscription.
-async fn ask_pet(app: &AppHandle, state: &AppState, message: Option<String>) -> Result<String, String> {
+/// What kind of answer is wanted.
+enum Ask {
+    /// An unprompted pep talk.
+    Nudge,
+    Message(String),
+    /// A message about the screen: the screenshot is already saved in the brain folder.
+    Screen(String),
+    /// The first "bonjour" of the morning.
+    Briefing(String),
+}
+
+async fn ask_pet(app: &AppHandle, state: &AppState, ask: Ask) -> Result<String, String> {
     if state.thinking.swap(true, Ordering::SeqCst) {
         return Err("hold on, i'm still thinking…".into());
     }
@@ -131,21 +146,50 @@ async fn ask_pet(app: &AppHandle, state: &AppState, message: Option<String>) -> 
         (s.display_name(), s.effective_model())
     };
     let status = with_pet(app, |pet| pet.describe());
-    let prompt = {
+    let today = state.reminders.lock().unwrap().today(chrono::Local::now());
+    let (prompt, mode) = {
         let notes = state.notes.lock().unwrap();
         let history = state.history.lock().unwrap();
-        match &message {
-            Some(m) => chat::build_prompt(&name, &status, &notes, &history, m),
-            None => chat::build_nudge_prompt(&name, &status, &notes, &history),
+        match &ask {
+            Ask::Nudge => (chat::build_nudge_prompt(&name, &status, &notes, &history), chat::Mode::Web),
+            Ask::Message(m) => (chat::with_memory_hint(chat::build_prompt(&name, &status, &notes, &history, m)), chat::Mode::Web),
+            Ask::Screen(m) => {
+                let m = format!(
+                    "{m}\n\n[screen] A screenshot of the human's screen right now is saved at ./{}. Read that file to see it, then answer about it.",
+                    screen::FILE
+                );
+                (chat::build_prompt(&name, &status, &notes, &history, &m), chat::Mode::Screen)
+            }
+            Ask::Briefing(m) => (chat::build_briefing_prompt(&name, &status, &notes, &history, m, &today), chat::Mode::Web),
         }
     };
-    let reply = chat::ask_claude(&state.brain(), &model, &prompt).await?;
+    let answer = chat::ask_claude(&state.brain(), &model, &prompt, mode).await?;
+    let (reply, facts) = chat::take_memories(&answer.text);
+    // Only facts from a turn without web pages: a page can't plant "memories".
+    if matches!(ask, Ask::Message(_)) && !answer.used_tools && !facts.is_empty() {
+        let mut notes = state.notes.lock().unwrap();
+        if facts.iter().fold(false, |added, f| notes.add_auto(f) || added) {
+            let _ = notes.save(&state.data_dir);
+        }
+    }
 
     // Pep talks aren't part of the conversation, so they don't push real turns out of memory.
-    if let Some(said) = message {
-        state.update_history(|h| h.push(said, reply.clone()));
+    match ask {
+        Ask::Nudge => {}
+        Ask::Message(said) | Ask::Screen(said) | Ask::Briefing(said) => state.update_history(|h| h.push(said, reply.clone())),
     }
     Ok(reply)
+}
+
+/// The monitor under the mouse, in physical pixels: (x, y, width, height).
+fn screen_under_cursor(app: &AppHandle) -> Option<(i32, i32, i32, i32)> {
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())?;
+    let (pos, size) = (monitor.position(), monitor.size());
+    Some((pos.x, pos.y, size.width as i32, size.height as i32))
 }
 
 /// "lance discord": opens the app from the human's own shortcuts, without asking Claude.
@@ -168,6 +212,19 @@ fn launch(app: &AppHandle, state: &AppState, message: &str) -> Option<Result<Str
         }
         Err(e) => Err(format!("je n'ai pas réussi à ouvrir {name} ({e})")),
     })
+}
+
+/// "briefing" any time, or the first "bonjour" between 5h and noon.
+fn first_hello_of_the_morning(state: &AppState, message: &str, name: &str) -> bool {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    let mut briefed = state.briefed.lock().unwrap();
+    let asked = crate::launcher::command_text(message, name).contains("briefing");
+    let morning = (5..12).contains(&now.hour()) && *briefed != Some(now.date_naive());
+    if asked || morning {
+        *briefed = Some(now.date_naive());
+    }
+    asked || morning
 }
 
 /// Reminders and timers, understood without Claude.
@@ -215,7 +272,17 @@ async fn chat(app: AppHandle, state: State<'_, AppState>, message: String) -> Re
     if let Some(reply) = remind(&state, &message) {
         return reply;
     }
-    let reply = ask_pet(&app, &state, Some(message)).await?;
+    let ask = if screen::wanted(&message) {
+        let (x, y, w, h) = screen_under_cursor(&app).ok_or("je ne trouve pas ton écran")?;
+        let brain = state.brain();
+        tauri::async_runtime::spawn_blocking(move || screen::capture(&brain, x, y, w, h)).await.map_err(|e| e.to_string())??;
+        Ask::Screen(message)
+    } else if chat::is_greeting(&message, &name) && first_hello_of_the_morning(&state, &message, &name) {
+        Ask::Briefing(message)
+    } else {
+        Ask::Message(message)
+    };
+    let reply = ask_pet(&app, &state, ask).await?;
     with_pet(&app, Pet::chatted);
     Ok(reply)
 }
@@ -232,7 +299,7 @@ async fn pep_talk_loop(app: AppHandle) {
             continue;
         }
         last = Instant::now();
-        let text = ask_pet(&app, &state, None)
+        let text = ask_pet(&app, &state, Ask::Nudge)
             .await
             .unwrap_or_else(|_| chat::fallback_pep(now_ms()).to_string());
         let _ = app.emit("nudge", text);
@@ -299,7 +366,7 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
             Ok("personality restored to the default. hi again!".into())
         }
         Command::Motivate => {
-            let text = match ask_pet(&app, &state, None).await {
+            let text = match ask_pet(&app, &state, Ask::Nudge).await {
                 Ok(text) => text,
                 Err(_) => chat::fallback_pep(now_ms()).to_string(),
             };
@@ -319,10 +386,12 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
         }
         Command::Memories => {
             let notes = state.notes.lock().unwrap();
-            if notes.list().is_empty() {
-                return Ok("i'm not remembering anything yet. teach me with /remember <fact>".into());
+            if notes.list().is_empty() && notes.auto().is_empty() {
+                return Ok("je ne retiens encore rien. apprends-moi avec /remember <fait>".into());
             }
-            Ok(notes.list().iter().enumerate().map(|(i, n)| format!("{}. {n}", i + 1)).collect::<Vec<_>>().join("\n"))
+            let asked = notes.list().iter().map(|n| n.to_string());
+            let noticed = notes.auto().iter().map(|n| format!("{n} (retenu tout seul)"));
+            Ok(asked.chain(noticed).enumerate().map(|(i, n)| format!("{}. {n}", i + 1)).collect::<Vec<_>>().join("\n"))
         }
         Command::Forget => {
             let mut notes = state.notes.lock().unwrap();
@@ -376,7 +445,30 @@ fn summon(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
-    let _ = app.emit("dictate", ());
+    if voice_in::model_path(app).is_some() {
+        // Listen with the local speech model: talk, and it sends by itself.
+        app.state::<voice_in::Ears>().arm();
+        let _ = app.emit("listen", voice_in::Listen { state: "listening", text: String::new() });
+    } else {
+        let _ = app.emit("dictate", ());
+    }
+}
+
+/// The 🎙 button: same as Ctrl+Space.
+#[tauri::command]
+fn listen_now(app: AppHandle) {
+    summon(&app);
+}
+
+#[tauri::command]
+fn cancel_listen(ears: State<'_, voice_in::Ears>) {
+    ears.cancel();
+}
+
+/// The window says when the pet starts and stops talking, so the microphone ignores it.
+#[tauri::command]
+fn set_speaking(ears: State<'_, voice_in::Ears>, on: bool) {
+    ears.set_speaking(on);
 }
 
 #[tauri::command]
@@ -426,6 +518,9 @@ fn apply_settings(app: &AppHandle, s: &Settings) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_always_on_top(s.on_top);
     }
+    let ears = app.state::<voice_in::Ears>();
+    ears.set_wake(s.listen);
+    ears.set_name(s.display_name());
     let _ = app.emit("settings", s);
     with_pet(app, |_| ()); // refresh the tray tooltip with the new name
 }
@@ -467,6 +562,9 @@ pub fn run() {
             personality::open_personality_file,
             tts,
             start_dictation,
+            listen_now,
+            cancel_listen,
+            set_speaking,
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -492,7 +590,10 @@ pub fn run() {
                     list
                 }),
                 thinking: AtomicBool::new(false),
+                briefed: Mutex::new(None),
             });
+            app.manage(voice_in::Ears::new(settings.listen, settings.display_name()));
+            voice_in::start(app.handle().clone());
 
             let window = app
                 .get_webview_window("main")

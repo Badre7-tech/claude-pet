@@ -278,6 +278,24 @@ input:focus-visible {
   user-select: text;
 }
 
+.chat .mic {
+  background: var(--field);
+  border-color: var(--paper-edge);
+  color: var(--ink);
+}
+
+body.listening .chat .mic {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    transform: scale(1.08);
+  }
+}
+
 .chat button {
   width: 30px;
   padding: 0;

@@ -1,6 +1,6 @@
 [package]
 name = "claude-pet"
-version = "0.4.1"
+version = "0.5.0"
 description = "A tiny desktop pet that chats through the local Claude Code CLI"
 license = "MIT"
 edition = "2021"
@@ -24,10 +24,14 @@ chrono = "0.4"
 regex = "1"
 ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
 native-tls = "0.2"
+png = "0.18"
+cpal = "0.16"
+whisper-rs = "0.16"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",

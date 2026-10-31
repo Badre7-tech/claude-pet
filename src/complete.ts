@@ -17,6 +17,7 @@ const COMMANDS: { cmd: string; hint: string; args?: Arg[]; keys?: Arg[] }[] = [
       { name: "voice", hint: "read answers out loud", values: ["on", "off"] },
       { name: "theme", hint: "dark or light bubbles", values: ["dark", "light"] },
       { name: "autostart", hint: "start with Windows", values: ["on", "off"] },
+      { name: "listen", hint: "always listen for “hey” + my name", values: ["on", "off"] },
       { name: "voiceengine", hint: "which voice speaks", values: ["elevenlabs", "windows", "mix"] },
       { name: "voicestyle", hint: "cartoon or normal voice", values: ["cartoon", "normal"] },
       { name: "pitch", hint: "cartoon voice height, 1 to 2", values: ["1.4", "1.6", "1.7", "1.8", "2"] },

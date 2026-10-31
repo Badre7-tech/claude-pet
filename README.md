@@ -38,7 +38,16 @@ window, cheers you on while you work, and chats through your local Claude Code C
 - **ElevenLabs voice** (v0.4): `/settings elevenkey <key>`; every clip is cached on disk so a
   sentence is only paid for once, long answers are only read up to ~600 characters, and any
   problem falls back to the Windows voice. The mouth moves for as long as the voice speaks.
-- **Ctrl+Space** brings the pet up and starts Windows voice typing in its chat box.
+- **Hands-free** (v0.5): say "Hey Pyrosan, …" (the pet's name) and it answers; Ctrl+Space or the
+  🎙 button listen without the name. Speech is turned into text by whisper.cpp **on this
+  computer** (the small model is bundled in the installer); the microphone is ignored while the
+  pet talks. `/settings listen off` stops the always-on listening.
+- **"Regarde mon écran"** (v0.5): a screenshot of the monitor under the mouse is saved in the
+  brain folder and Claude may read only that file for that message (no web on that turn).
+- **Morning briefing** (v0.5): the first "bonjour" of the morning (or "briefing") gets the date,
+  the local weather, today's reminders and a couple of news items.
+- **Automatic memory** (v0.5): Claude flags lasting facts about you and the pet keeps up to 30
+  of them (`/memories`, `/forget`). Facts are only accepted from turns that used no web page.
 - **Dark theme** (default) and **start with Windows** (`/settings theme`, `/settings autostart`).
 
 ## Moods

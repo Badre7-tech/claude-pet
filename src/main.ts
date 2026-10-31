@@ -3,7 +3,11 @@ import {
   chat,
   getPet,
   getSettings,
+  cancelListen,
+  listenNow,
   onDictate,
+  onHeard,
+  onListen,
   onNudge,
   onReaction,
   onReminder,
@@ -12,6 +16,7 @@ import {
   openPersonality,
   quit,
   runCommand,
+  setSpeaking,
   startDictation,
   ttsAudio,
   type Pet,
@@ -89,6 +94,14 @@ let current: SpeechSynthesisUtterance | undefined;
 
 const speaking = () => (tts?.speaking ?? false) || clip !== undefined;
 
+/** Tells the listener the pet's own voice is playing, so it doesn't hear itself. */
+let micMuted = false;
+function muteMic(on: boolean) {
+  if (on === micMuted) return;
+  micMuted = on;
+  void setSpeaking(on).catch(() => {});
+}
+
 function stopVoice() {
   voiceTurn++;
   current = undefined;
@@ -97,6 +110,7 @@ function stopVoice() {
   clip = undefined;
   playing?.stop();
   pet.settle();
+  muteMic(false);
 }
 
 /** What's worth saying out loud: no links, *sound effects*, emoji or markdown symbols. */
@@ -122,6 +136,10 @@ function firstPart(text: string, max: number) {
 /** Talking is over: stop moving the mouth, and let the bubble go a few seconds later. */
 function doneTalking() {
   pet.settle();
+  // A short pause first: the end of the voice is still in the room for a moment.
+  setTimeout(() => {
+    if (!speaking()) muteMic(false);
+  }, 400);
   clearTimeout(bubbleTimer);
   bubbleTimer = window.setTimeout(hideBubble, 4000);
 }
@@ -140,6 +158,7 @@ function windowsVoice(line: string, turn: number) {
     doneTalking();
   };
   current = utterance;
+  muteMic(true);
   tts.speak(utterance);
 }
 
@@ -161,6 +180,7 @@ async function elevenVoice(line: string, turn: number) {
     doneTalking();
   };
   clip = source;
+  muteMic(true);
   source.start();
 }
 
@@ -216,23 +236,30 @@ function moodOf(p: Pet): Mood {
   return "neutral";
 }
 
-// Clicking the pet makes it wiggle, and hushes it if it was talking.
+// Clicking the pet makes it wiggle, hushes it if it was talking, and stops listening.
 const pet = new PetView(document.getElementById("pet")!, () => {
   stopVoice();
+  if (document.body.classList.contains("listening")) {
+    document.body.classList.remove("listening");
+    void cancelListen();
+    hideBubble();
+  }
   pet.play("wiggle");
 });
 const panel = new Panel(
   document.getElementById("panel")!,
   (action) => void act(action),
   (msg) => void talk(msg),
+  () => void listenNow(),
 );
 
-async function talk(msg: string) {
+async function talk(msg: string, spoken = false) {
   if (/^\/(bye|quit|exit)\s*$/i.test(msg)) return farewell();
   if (msg.startsWith("/")) return command(msg);
   panel.setThinking(true);
   stopVoice();
-  bubbleText.textContent = "";
+  // When it was said out loud, show what was understood while the pet thinks.
+  bubbleText.textContent = spoken ? `« ${msg} »` : "";
   bubbleEl.classList.add("show", "thinking");
   clearTimeout(bubbleTimer);
   try {
@@ -321,7 +348,51 @@ void onReminder((text) => {
   pet.play("wiggle");
   setTimeout(() => speak(text, true), 600);
 });
-// Ctrl+Space: the chat box gets the cursor, then Windows voice typing starts in it.
+/** A short rising "ding": the pet is listening. */
+function ding() {
+  try {
+    audio ??= new AudioContext();
+    const t = audio.currentTime;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.frequency.setValueAtTime(660, t);
+    osc.frequency.exponentialRampToValueAtTime(990, t + 0.12);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + 0.25);
+  } catch {
+    // no sound, no problem
+  }
+}
+
+void onListen(({ state, text }) => {
+  document.body.classList.toggle("listening", state === "listening");
+  if (state === "listening") {
+    stopVoice();
+    ding();
+    pet.play("wiggle");
+    say("🎙️ je t'écoute…", 0);
+  } else if (state === "thinking") {
+    bubbleText.textContent = "🎙️";
+    bubbleEl.classList.add("show", "thinking");
+    clearTimeout(bubbleTimer);
+  } else if (state === "error") {
+    say(`🎙️ ${text}`, 6000);
+  } else if (text) {
+    say(text, 2500);
+  } else if (bubbleText.textContent?.startsWith("🎙️")) {
+    hideBubble();
+  }
+});
+void onHeard((text) => {
+  document.body.classList.remove("listening");
+  void talk(text, true);
+});
+
+// Without the speech model, Ctrl+Space falls back to Windows voice typing in the chat box.
 void onDictate(() => {
   stopVoice();
   panel.focusInput();

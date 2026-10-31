@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Claude Pet",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "identifier": "dev.claudepet.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -34,6 +34,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": {
+      "resources/models/ggml-small-q5_1.bin": "models/ggml-small-q5_1.bin"
+    },
     "shortDescription": "A desktop pet that chats through your Claude Code CLI",
     "windows": {
       "nsis": {

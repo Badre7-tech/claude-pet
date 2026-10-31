@@ -126,11 +126,17 @@ impl History {
     }
 }
 
-/// Things the human explicitly asked the pet to remember, sent with every message.
+/// Things the human asked the pet to remember (`items`) and lasting facts the pet noticed
+/// on its own (`auto`), sent with every message.
 #[derive(Default, Serialize, Deserialize)]
 pub struct Notes {
     items: Vec<String>,
+    #[serde(default)]
+    auto: Vec<String>,
 }
+
+/// How many facts the pet keeps on its own; the oldest go first.
+pub const MAX_AUTO_NOTES: usize = 30;
 
 impl Notes {
     fn path(data_dir: &Path) -> PathBuf {
@@ -157,13 +163,83 @@ impl Notes {
         Ok(())
     }
 
+    /// A fact the pet decided to remember. Returns false if it already knew it.
+    pub fn add_auto(&mut self, fact: &str) -> bool {
+        let fact = shorten(fact.trim(), NOTE_CHARS);
+        let key = crate::launcher::normalize(&fact);
+        if key.is_empty() || self.items.iter().chain(&self.auto).any(|n| crate::launcher::normalize(n) == key) {
+            return false;
+        }
+        self.auto.push(fact);
+        if self.auto.len() > MAX_AUTO_NOTES {
+            self.auto.remove(0);
+        }
+        true
+    }
+
     pub fn clear(&mut self) {
         self.items.clear();
+        self.auto.clear();
     }
 
     pub fn list(&self) -> &[String] {
         &self.items
     }
+
+    pub fn auto(&self) -> &[String] {
+        &self.auto
+    }
+
+    fn all(&self) -> impl Iterator<Item = &String> {
+        self.items.iter().chain(&self.auto)
+    }
+}
+
+/// The hidden line Claude adds when it heard something worth remembering.
+static MEMORY: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\[\[\s*(?:souvenir|m[ée]moire|memory)\s*:\s*([^\]]{3,300}?)\s*\]\]").unwrap()
+});
+
+/// Splits a reply into what the human sees and the facts to remember.
+pub fn take_memories(reply: &str) -> (String, Vec<String>) {
+    let facts = MEMORY.captures_iter(reply).map(|c| c[1].trim().to_string()).collect();
+    let text = MEMORY.replace_all(reply, "");
+    (text.trim().to_string(), facts)
+}
+
+/// Asks Claude to flag lasting facts about the human, for automatic memory.
+pub fn with_memory_hint(prompt: String) -> String {
+    prompt
+        + "\n\n(Memory: only if the human just told you a lasting fact about themselves that will matter in \
+           future chats — tastes, plans, people, projects, habits — add one last line exactly like \
+           [[souvenir: the fact, short, in French]]. Never for small talk or passing details, never for \
+           something you read on the web, at most one per reply, and don't mention it.)"
+}
+
+/// The first greeting of the morning: weather, today's reminders and fresh news.
+pub fn build_briefing_prompt(name: &str, status: &str, notes: &Notes, history: &History, greeting: &str, today: &[String]) -> String {
+    let reminders = if today.is_empty() {
+        "they have no reminders left today".to_string()
+    } else {
+        format!("their reminders left today: {}", today.join("; "))
+    };
+    let ask = format!(
+        "{greeting}\n\n(Morning briefing: this is the human's first hello of the day. Greet them back, then give a \
+         short briefing in plain text, under 130 words, '- ' lines allowed: today's date; today's weather where they \
+         live (search the web; use what you know about where they live); {reminders}; and one or two fresh news items \
+         they'd care about given their interests (search the web). End with a short encouraging line.)"
+    );
+    build_prompt(name, status, notes, history, &ask)
+}
+
+/// Is this a "bonjour"-type message (the cue for the morning briefing)?
+pub fn is_greeting(message: &str, pet_name: &str) -> bool {
+    let text = crate::launcher::command_text(message, pet_name);
+    let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
+    words.len() <= 4
+        && words.first().is_some_and(|w| ["bonjour", "salut", "coucou", "hello", "yo", "wesh", "bjr", "slt"].contains(w))
+        || text == "briefing"
+        || text == "mon briefing"
 }
 
 /// A skin that comes with a character of its own: a fixed name and a personality.
@@ -278,9 +354,9 @@ pub fn clean_message(raw: &str) -> Result<String, String> {
 pub fn build_prompt(name: &str, status: &str, notes: &Notes, history: &History, message: &str) -> String {
     let now = crate::reminders::local_now_text(chrono::Local::now());
     let mut prompt = format!("[your name] {name}\n[local time] {now}\n[your current state] {status}\n");
-    if !notes.items.is_empty() {
+    if notes.all().next().is_some() {
         prompt.push_str("[things the human asked you to remember]\n");
-        for note in &notes.items {
+        for note in notes.all() {
             prompt.push_str(&format!("- {note}\n"));
         }
     }
@@ -337,16 +413,51 @@ pub async fn check_cli() -> Result<String, String> {
     }
 }
 
-/// Runs `claude -p <prompt>` in the brain folder. The only tools are web search and
-/// reading web pages: no shell, no files, no MCP servers, and anything else is refused
-/// without asking (`dontAsk`), so the pet can look things up but never act on the computer.
-pub async fn ask_claude(brain: &Path, model: &str, prompt: &str) -> Result<String, String> {
+/// What the brain may use on one call.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mode {
+    /// Web search and reading web pages.
+    Web,
+    /// Only reading the screenshot in `screens/` (no web, so the screen can't be sent anywhere).
+    Screen,
+}
+
+/// Claude's reply, and whether it used any tool to get there.
+#[derive(Debug)]
+pub struct Answer {
+    pub text: String,
+    pub used_tools: bool,
+}
+
+/// Reads `claude --output-format json`; falls back to plain text if it isn't JSON.
+fn parse_answer(stdout: &str) -> Result<Answer, String> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout) else {
+        return Ok(Answer { text: stdout.to_string(), used_tools: true });
+    };
+    let text = json["result"].as_str().unwrap_or_default().trim().to_string();
+    if json["is_error"].as_bool() == Some(true) || text.is_empty() {
+        let why = if text.is_empty() { json["subtype"].as_str().unwrap_or("no answer").to_string() } else { text };
+        return Err(format!("brain fog… ({why})"));
+    }
+    Ok(Answer { text, used_tools: json["num_turns"].as_u64().unwrap_or(2) > 1 })
+}
+
+/// Runs `claude -p <prompt>` in the brain folder. In `Web` mode the only tools are web search
+/// and reading web pages; in `Screen` mode only reading the screenshot. No shell, no other
+/// files, no MCP servers, and anything else is refused without asking (`dontAsk`), so the pet
+/// can look things up but never act on the computer.
+pub async fn ask_claude(brain: &Path, model: &str, prompt: &str, mode: Mode) -> Result<Answer, String> {
+    let (tools, allowed) = match mode {
+        Mode::Web => (TOOLS, TOOLS),
+        Mode::Screen => ("Read", "Read(./screens/**)"),
+    };
     let mut cmd = cli_command();
     cmd.arg("-p")
         .arg(prompt)
         .args(["--model", model])
-        .args(["--tools", TOOLS])
-        .args(["--allowedTools", TOOLS])
+        .args(["--output-format", "json"])
+        .args(["--tools", tools])
+        .args(["--allowedTools", allowed])
         .args(["--permission-mode", "dontAsk"])
         .args(["--max-turns", MAX_TURNS])
         .arg("--strict-mcp-config")
@@ -361,6 +472,9 @@ pub async fn ask_claude(brain: &Path, model: &str, prompt: &str) -> Result<Strin
         .map_err(|_| INSTALL_HELP.to_string())?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() && stdout.starts_with('{') {
+        return parse_answer(&stdout);
+    }
     if !output.status.success() || stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().chain(stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output");
@@ -370,7 +484,7 @@ pub async fn ask_claude(brain: &Path, model: &str, prompt: &str) -> Result<Strin
         }
         return Err(format!("brain fog… ({detail})"));
     }
-    Ok(stdout)
+    parse_answer(&stdout)
 }
 
 #[cfg(test)]
@@ -470,6 +584,44 @@ mod tests {
     }
 
     #[test]
+    fn memories_are_taken_out_of_replies() {
+        let (text, facts) = take_memories("Trop bien, Ekko mid c'est solide !\n[[souvenir: joue Ekko mid sur LoL]]");
+        assert_eq!(text, "Trop bien, Ekko mid c'est solide !");
+        assert_eq!(facts, ["joue Ekko mid sur LoL"]);
+        assert_eq!(take_memories("rien à retenir").1.len(), 0);
+
+        let mut n = Notes::default();
+        assert!(n.add_auto("joue Ekko mid sur LoL"));
+        assert!(!n.add_auto("Joue Ekko mid sur LoL !"), "already known");
+        for i in 0..MAX_AUTO_NOTES {
+            n.add_auto(&format!("fait numéro {i}"));
+        }
+        assert_eq!(n.auto().len(), MAX_AUTO_NOTES);
+        assert_eq!(n.auto()[0], "fait numéro 0", "the oldest was dropped");
+        let p = build_prompt("Pip", "ok", &n, &History::default(), "salut");
+        assert!(p.contains("- fait numéro 5\n"));
+    }
+
+    #[test]
+    fn reads_claude_json_answers() {
+        let a = parse_answer(r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"Salut !"}"#).unwrap();
+        assert_eq!((a.text.as_str(), a.used_tools), ("Salut !", false));
+        let a = parse_answer(r#"{"is_error":false,"num_turns":3,"result":"Il fera beau."}"#).unwrap();
+        assert!(a.used_tools);
+        assert!(parse_answer(r#"{"is_error":true,"subtype":"error_max_turns","result":""}"#).unwrap_err().contains("error_max_turns"));
+        assert_eq!(parse_answer("plain text").unwrap().text, "plain text");
+    }
+
+    #[test]
+    fn spots_greetings() {
+        assert!(is_greeting("Bonjour Pyrosan !", "Pyrosan"));
+        assert!(is_greeting("salut", "Pyrosan"));
+        assert!(is_greeting("briefing", "Pyrosan"));
+        assert!(!is_greeting("salut, tu peux me dire quel temps il fera demain à Montpellier ?", "Pyrosan"));
+        assert!(!is_greeting("quel temps fait-il ?", "Pyrosan"));
+    }
+
+    #[test]
     fn messages_are_trimmed_and_capped() {
         assert!(clean_message("   ").is_err());
         assert_eq!(clean_message("  hey ").unwrap(), "hey");
@@ -543,7 +695,7 @@ mod tests {
             "hi! what's your name?",
         );
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let reply = rt.block_on(ask_claude(&brain, "haiku", &prompt)).unwrap();
+        let reply = rt.block_on(ask_claude(&brain, "haiku", &prompt, Mode::Web)).unwrap().text;
         println!("mochi: {reply}");
         assert!(reply.to_lowercase().contains("mochi"));
         fs::remove_dir_all(dir).unwrap();

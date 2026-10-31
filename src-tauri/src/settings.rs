@@ -38,6 +38,8 @@ pub struct Settings {
     pub voice_style: String,
     /// How high the cartoon voice goes, 1 (normal) to 2 (highest).
     pub voice_pitch: f32,
+    /// Always listening for "Hey <name>" (the speech model runs on this computer).
+    pub listen: bool,
 }
 
 /// The ElevenLabs voice picked for Pyrosan.
@@ -66,11 +68,12 @@ impl Default for Settings {
             voice_engine: "elevenlabs".into(),
             voice_style: "normal".into(),
             voice_pitch: 1.7,
+            listen: true,
         }
     }
 }
 
-pub const KEYS: &str = "name, skin, model, voice, voiceengine, voicestyle, pitch, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
+pub const KEYS: &str = "name, skin, model, listen, voice, voiceengine, voicestyle, pitch, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
 
 impl Settings {
     pub fn load(dir: &Path) -> Self {
@@ -105,10 +108,11 @@ impl Settings {
 
     pub fn describe(&self) -> String {
         format!(
-            "name: {} · skin: {} · model: {} · voice: {}{} · theme: {} · autostart: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
+            "name: {} · skin: {} · model: {} · listen: {} · voice: {}{} · theme: {} · autostart: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
             self.display_name(),
             self.skin,
             self.effective_model(),
+            on_off(self.listen),
             on_off(self.voice),
             {
                 let engine = if self.eleven_key.is_empty() { "windows" } else { self.voice_engine.as_str() };
@@ -194,6 +198,14 @@ impl Settings {
                 }
                 self.eleven_voice = value.into();
                 Ok(format!("voix ElevenLabs : {value}"))
+            }
+            "listen" => {
+                self.listen = parse_on_off(value).ok_or("listen is on or off")?;
+                Ok(if self.listen {
+                    format!("j'écoute ! dis « Hey {} » quand tu as besoin de moi", self.display_name())
+                } else {
+                    "je n'écoute plus (Ctrl+Espace marche toujours)".into()
+                })
             }
             "voiceengine" => {
                 self.voice_engine = match value.to_lowercase().as_str() {
@@ -390,6 +402,9 @@ mod tests {
         assert!(s.set("elevenkey", "not a key").is_err());
         assert!(s.set("elevenvoice", "../x").is_err());
         assert!(s.set("elevenmodel", "quality").is_ok());
+        assert!(s.listen, "listening is on by default");
+        assert!(s.set("listen", "off").is_ok());
+        assert!(!s.listen);
         assert!(s.set("voiceengine", "windows").is_ok());
         assert_eq!(s.voice_engine, "windows");
         assert!(s.set("voiceengine", "robot").is_err());

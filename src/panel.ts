@@ -21,6 +21,7 @@ export class Panel {
     el: HTMLElement,
     onAction: (a: PanelAction) => void,
     onChat: (msg: string) => void,
+    onMic: () => void,
   ) {
     el.innerHTML = /* html */ `
       <div class="stats">
@@ -41,6 +42,7 @@ export class Panel {
       <ul class="suggest" role="listbox" aria-label="Command suggestions" hidden></ul>
       <form class="chat" autocomplete="off">
         <input name="msg" maxlength="2000" placeholder="pose-moi une question… ou /help" aria-label="Message to your pet" />
+        <button type="button" class="mic" aria-label="Parler" title="Parler (Ctrl+Espace)">🎙</button>
         <button type="submit" aria-label="Send">↑</button>
       </form>`;
 
@@ -59,7 +61,8 @@ export class Panel {
 
     const form = el.querySelector<HTMLFormElement>(".chat")!;
     this.input = form.querySelector("input")!;
-    this.sendBtn = form.querySelector("button")!;
+    this.sendBtn = form.querySelector('button[type="submit"]')!;
+    form.querySelector(".mic")!.addEventListener("click", () => onMic());
     this.list = el.querySelector(".suggest")!;
     form.addEventListener("submit", (e) => {
       e.preventDefault();

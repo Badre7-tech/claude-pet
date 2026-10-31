@@ -35,7 +35,11 @@ export type Settings = {
   voice_engine: string;
   voice_style: string;
   voice_pitch: number;
+  listen: boolean;
 };
+
+/** What the listening thread is doing (see src-tauri/src/voice_in.rs). */
+export type Listen = { state: "listening" | "thinking" | "idle" | "error"; text: string };
 
 export const getPet = () => invoke<Pet>("get_pet");
 export const act = (action: "feed" | "play" | "sleep") => invoke<Reaction>(action);
@@ -56,3 +60,9 @@ export const onDictate = (cb: () => void) => listen("dictate", () => cb());
 /** An MP3 of the pet's ElevenLabs voice saying `text`. */
 export const ttsAudio = (text: string) => invoke<ArrayBuffer>("tts", { text });
 export const startDictation = () => invoke("start_dictation");
+export const listenNow = () => invoke("listen_now");
+export const cancelListen = () => invoke("cancel_listen");
+export const setSpeaking = (on: boolean) => invoke("set_speaking", { on });
+export const onListen = (cb: (l: Listen) => void) => listen<Listen>("listen", (e) => cb(e.payload));
+/** Something the human said out loud, already turned into text. */
+export const onHeard = (cb: (text: string) => void) => listen<string>("heard", (e) => cb(e.payload));

@@ -6,3 +6,5 @@ src-tauri/gen/schemas/
 .DS_Store
 design/sprites/*.html
 design/character/renders/
+# The speech model is downloaded at build time (scripts/fetch-speech-model.mjs).
+src-tauri/resources/models/
