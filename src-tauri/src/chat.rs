@@ -234,8 +234,10 @@ pub fn build_briefing_prompt(name: &str, status: &str, notes: &Notes, history: &
 
 /// Is this a "bonjour"-type message (the cue for the morning briefing)?
 pub fn is_greeting(message: &str, pet_name: &str) -> bool {
-    let text = crate::launcher::command_text(message, pet_name);
-    let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
+    let text = crate::launcher::normalize(message);
+    let pet = crate::launcher::normalize(pet_name);
+    let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty() && *w != pet).collect();
+    let text = words.join(" ");
     words.len() <= 4
         && words.first().is_some_and(|w| ["bonjour", "salut", "coucou", "hello", "yo", "wesh", "bjr", "slt"].contains(w))
         || text == "briefing"

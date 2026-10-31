@@ -169,9 +169,13 @@ pub fn after_wake_word(text: &str, name: &str) -> Option<String> {
     };
     let words: Vec<&str> = text.split_whitespace().collect();
     let plain: Vec<String> = words.iter().map(|w| normalize(w).replace(' ', "")).collect();
-    let greetings = ["hey", "he", "hei", "et", "eh", "e", "ok", "okay", "salut", "dis"];
-    for start in 0..=1.min(words.len()) {
-        if start == 1 && !greetings.contains(&plain[0].as_str()) {
+    // Little words people put before a name: "ouais mon gars", "bon allez Pyrosan".
+    let fillers = [
+        "hey", "he", "hei", "et", "eh", "e", "ok", "okay", "salut", "dis", "ouais", "oui", "alors", "bon", "allez", "euh", "bah",
+        "ben", "wesh", "yo", "oh", "ah",
+    ];
+    for start in 0..=2.min(words.len()) {
+        if !plain[..start].iter().all(|w| fillers.contains(&w.as_str())) {
             break;
         }
         let mut joined = String::new();
@@ -646,6 +650,12 @@ mod tests {
         assert_eq!(after_wake_word("Paris, c'est sympa", n), None);
         assert_eq!(after_wake_word("Hey mon gars, lance League of Legends.", "mon gars").as_deref(), Some("lance League of Legends."));
         assert_eq!(after_wake_word("Mon gars ?", "mon gars").as_deref(), Some("?"));
+        assert_eq!(
+            after_wake_word("Ouais mon gars, tu m'entends ? Ferme le League of Legends s'il te plaît.", "mon gars").as_deref(),
+            Some("tu m'entends ? Ferme le League of Legends s'il te plaît.")
+        );
+        assert_eq!(after_wake_word("Bon allez mon gars lance Discord", "mon gars").as_deref(), Some("lance Discord"));
+        assert_eq!(after_wake_word("Ouais je sais pas mon gars", "mon gars"), None);
         assert_eq!(after_any("Et Pyrosan, ça va ?", &["mon gars".into(), "Pyrosan".into()]).as_deref(), Some("ça va ?"));
         assert_eq!(after_wake_word("On y va les gars", "mon gars"), None);
     }

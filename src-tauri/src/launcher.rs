@@ -17,7 +17,8 @@ const VERBS: &[&str] = &[
 /// Polite or addressing words allowed before the verb: "hey pyro, tu peux lancer…".
 pub(crate) const PREAMBLE: &[&str] = &[
     "hey", "he", "et", "ok", "okay", "eh", "dis", "pyro", "pyrosan", "jarvis", "tu", "peux", "pourrais",
-    "est", "ce", "que", "stp", "svp", "please", "can", "could", "you", "vas", "y",
+    "est", "ce", "que", "stp", "svp", "please", "can", "could", "you", "vas", "y", "ouais", "oui", "alors",
+    "bon", "allez", "euh", "bah", "ben", "wesh", "yo", "mon", "gars", "frere", "frero", "poto", "salut",
 ];
 
 /// Politeness that can trail a command: "monte le son stp".
@@ -65,16 +66,38 @@ pub(crate) fn command_text(message: &str, pet_name: &str) -> String {
     let mut words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
     let skip = words.iter().take_while(|w| PREAMBLE.contains(w) || **w == pet).count();
     words.drain(..skip);
-    while words.last().is_some_and(|w| TRAILING.contains(w) || *w == pet) {
-        words.pop();
+    loop {
+        let n = words.len();
+        if words.last().is_some_and(|w| TRAILING.contains(w) || *w == pet) {
+            words.pop();
+        } else if words.ends_with(&["s", "il", "te", "plait"]) || words.ends_with(&["s", "il", "vous", "plait"]) {
+            words.truncate(n - 4);
+        } else if words.ends_with(&["s", "te", "plait"]) {
+            words.truncate(n - 3);
+        } else if words.ends_with(&["te", "plait"]) {
+            words.truncate(n - 2);
+        } else {
+            break;
+        }
     }
     words.join(" ")
+}
+
+/// The pieces of a spoken message: "tu m'entends ? Ferme LoL s'il te plaît" → two clauses,
+/// so a command said after a little chat is still found.
+pub(crate) fn clauses(message: &str) -> Vec<String> {
+    message
+        .split(|c: char| matches!(c, '?' | '!' | '.' | ';' | ',' | '\n'))
+        .map(str::trim)
+        .filter(|c| c.chars().any(char::is_alphanumeric))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The app name in "lance league of legends", or None if the message isn't a launch request.
 /// `pet_name` is allowed before the verb too ("Pyro, ouvre Discord").
 pub fn requested_app(message: &str, pet_name: &str) -> Option<String> {
-    let text = normalize(message);
+    let text = command_text(message, pet_name);
     let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
     let pet = normalize(pet_name);
     let verb = words.iter().position(|w| VERBS.contains(w))?;
@@ -225,6 +248,13 @@ mod tests {
         assert_eq!(command_text("Pyrosan, monte le son stp !", "Pyrosan"), "monte le son");
         assert_eq!(command_text("hey pyrosan est-ce que tu peux couper le son", "Pyrosan"), "couper le son");
         assert_eq!(command_text("Musique suivante.", "Pyrosan"), "musique suivante");
+        assert_eq!(command_text("Ok, alors ferme-moi League of Legends.", "Pyrosan"), "ferme moi league of legends");
+        assert_eq!(command_text("Ferme le League of Legends s'il te plaît.", "Pyrosan"), "ferme le league of legends");
+        assert_eq!(command_text("lance Discord s'te plaît", "Pyrosan"), "lance discord");
+        assert_eq!(
+            clauses("Ouais, tu m'entends ? Ferme le League of Legends s'il te plaît."),
+            ["Ouais", "tu m'entends", "Ferme le League of Legends s'il te plaît"]
+        );
     }
 
     #[test]

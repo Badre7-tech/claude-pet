@@ -9,6 +9,7 @@ mod stats;
 mod tray;
 mod tts;
 mod voice_in;
+mod web;
 
 use chat::{History, Notes, RateLimiter};
 use settings::{Command, Settings};
@@ -195,12 +196,13 @@ fn screen_under_cursor(app: &AppHandle) -> Option<(i32, i32, i32, i32)> {
 /// "lance discord": opens the app from the human's own shortcuts, without asking Claude.
 /// None when the message isn't a launch request (or names something that isn't there and
 /// reads more like a sentence), so it goes to Claude as usual.
-fn launch(app: &AppHandle, state: &AppState, message: &str) -> Option<Result<String, String>> {
+fn launch(app: &AppHandle, state: &AppState, message: &str, strict: bool) -> Option<Result<String, String>> {
     use tauri_plugin_opener::OpenerExt;
     let pet_name = state.settings.lock().unwrap().display_name();
     let wanted = launcher::requested_app(message, &pet_name)?;
     let Some((name, path)) = launcher::find(&wanted, &launcher::shortcut_dirs()) else {
-        if wanted.split(' ').count() > 3 {
+        // Inside a longer sentence, a "lance …" that matches nothing is just conversation.
+        if strict || wanted.split(' ').count() > 3 {
             return None;
         }
         return Some(Err(format!("je ne trouve pas « {wanted} » dans ton menu Démarrer ni sur ton bureau")));
@@ -212,6 +214,39 @@ fn launch(app: &AppHandle, state: &AppState, message: &str) -> Option<Result<Str
         }
         Err(e) => Err(format!("je n'ai pas réussi à ouvrir {name} ({e})")),
     })
+}
+
+/// Computer commands (sound, apps, sites, reminders), looked for in the whole message and then
+/// in each of its clauses, so "tu m'entends ? Ferme LoL s'il te plaît" still closes the game.
+async fn local_command(app: &AppHandle, state: &AppState, message: &str, name: &str) -> Option<Result<String, String>> {
+    use tauri_plugin_opener::OpenerExt;
+    let mut texts = vec![message.to_string()];
+    let parts = launcher::clauses(message);
+    if parts.len() > 1 {
+        texts.extend(parts);
+    }
+    if let Some(action) = texts.iter().find_map(|t| actions::parse(t, name)) {
+        return Some(tauri::async_runtime::spawn_blocking(move || actions::run(action)).await.unwrap_or_else(|e| Err(e.to_string())));
+    }
+    // A search ("une vidéo de Squeezie") beats just opening the site ("mets YouTube").
+    let sites: Vec<(String, String)> = texts.iter().filter_map(|t| web::parse(t, name)).collect();
+    if let Some((url, said)) = sites.iter().find(|(url, _)| url.contains('?') || url.contains('#')).or(sites.first()).cloned() {
+        return Some(app.opener().open_url(url, None::<&str>).map(|_| said).map_err(|e| format!("je n'arrive pas à ouvrir le navigateur ({e})")));
+    }
+    if let Some(reply) = remind(state, message) {
+        return Some(reply);
+    }
+    for (i, text) in texts.iter().enumerate() {
+        if i > 0 {
+            if let Some(Ok(reply)) = remind(state, text) {
+                return Some(Ok(reply));
+            }
+        }
+        if let Some(reply) = launch(app, state, text, i > 0) {
+            return Some(reply);
+        }
+    }
+    None
 }
 
 /// "briefing" any time, or the first "bonjour" between 5h and noon.
@@ -261,15 +296,8 @@ async fn chat(app: AppHandle, state: State<'_, AppState>, message: String) -> Re
     let message = chat::clean_message(&message)?;
     // Things to do on the computer are handled here and never reach Claude.
     let name = state.settings.lock().unwrap().display_name();
-    if let Some(action) = actions::parse(&message, &name) {
-        let reply = tauri::async_runtime::spawn_blocking(move || actions::run(action)).await.map_err(|e| e.to_string())?;
+    if let Some(reply) = local_command(&app, &state, &message, &name).await {
         with_pet(&app, Pet::chatted);
-        return reply;
-    }
-    if let Some(reply) = launch(&app, &state, &message) {
-        return reply;
-    }
-    if let Some(reply) = remind(&state, &message) {
         return reply;
     }
     let ask = if screen::wanted(&message) {

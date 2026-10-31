@@ -380,6 +380,8 @@ mod tests {
         assert_eq!(p("ferme Discord"), Some(Action::Close("discord".into())));
         assert_eq!(p("hey pyrosan ferme moi le jeu league of legends"), Some(Action::Close("league of legends".into())));
         assert_eq!(p("quitte spotify stp"), Some(Action::Close("spotify".into())));
+        assert_eq!(p("Ferme le League of Legends s'il te plaît."), Some(Action::Close("league of legends".into())));
+        assert_eq!(p("Ok, alors ferme-moi League of Legends."), Some(Action::Close("league of legends".into())));
         assert_eq!(p("ferme le pc"), None, "never shuts the computer down");
         assert_eq!(p("verrouille le PC"), Some(Action::Lock));
         assert_eq!(p("mets le PC en veille"), Some(Action::Sleep));
