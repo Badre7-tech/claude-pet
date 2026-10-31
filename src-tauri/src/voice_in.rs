@@ -27,7 +27,7 @@ const MAX_FRAMES: usize = 15 * 50; // 15 s
 /// Quietest 20 ms that can still count as voice (about -46 dB), for low-gain headset mics.
 const MIN_VOICE: f32 = 0.005;
 /// After "Hey Pyrosan" alone (or the shortcut), how long the pet waits for the request.
-const FOLLOW_UP: Duration = Duration::from_secs(8);
+const FOLLOW_UP: Duration = Duration::from_secs(10);
 
 /// Turns microphone audio at any rate into 16 kHz by averaging (which also smooths it).
 pub struct Downsampler {
@@ -233,9 +233,28 @@ pub struct Ears {
 struct Report {
     model: Option<bool>,
     mic: String,
+    /// Loudest 20 ms in the last half minute or so, and when it was last raised.
     peak: f32,
+    peak_at: Option<Instant>,
+    /// How loud the last sentence was, before the automatic boost.
+    last_sentence_db: Option<f32>,
     heard: Vec<String>,
     problem: String,
+}
+
+fn db(level: f32) -> f32 {
+    20.0 * level.max(1e-6).log10()
+}
+
+/// Brings a quiet sentence up to a level the speech model hears well (at most ×30).
+pub fn louder(audio: &[f32]) -> Vec<f32> {
+    let peak = audio.iter().fold(0f32, |m, x| m.max(x.abs()));
+    let rms = (audio.iter().map(|x| x * x).sum::<f32>() / audio.len().max(1) as f32).sqrt();
+    if peak < 1e-4 {
+        return audio.to_vec();
+    }
+    let gain = (0.9 / peak).min(0.1 / rms.max(1e-6)).clamp(1.0, 30.0);
+    audio.iter().map(|x| (x * gain).clamp(-1.0, 1.0)).collect()
 }
 
 impl Ears {
@@ -249,12 +268,16 @@ impl Ears {
             None => "pas encore chargé",
         };
         let mic = if r.mic.is_empty() { "pas encore ouvert".to_string() } else { r.mic.clone() };
-        let level = if r.peak <= 0.0 {
-            "rien reçu".to_string()
+        let recent = r.peak_at.is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+        let level = if !recent || r.peak <= 0.0 {
+            "rien de fort depuis 30 s".to_string()
         } else {
-            let db = 20.0 * r.peak.log10();
-            let verdict = if r.peak < MIN_VOICE * 2.0 { " (très faible : monte le volume du micro dans Windows)" } else { "" };
-            format!("{db:.0} dB{verdict}")
+            let verdict = if r.peak < MIN_VOICE * 4.0 { " (faible : monte le micro dans Windows)" } else { " (ok)" };
+            format!("{:.0} dB{verdict}", db(r.peak))
+        };
+        let level = match r.last_sentence_db {
+            Some(d) => format!("{level}\ndernière phrase : {d:.0} dB (je l'amplifie au besoin)"),
+            None => format!("{level}\ndernière phrase : aucune détectée"),
         };
         let heard = if r.heard.is_empty() { "rien".to_string() } else { r.heard.iter().map(|h| format!("« {h} »")).collect::<Vec<_>>().join(" · ") };
         let mut out = format!(
@@ -433,7 +456,9 @@ fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio:
         tell(app, "thinking", "");
     }
     let vocabulary = ears.vocabulary.lock().unwrap().clone();
-    let text = clean(&transcribe(ctx, audio, &first, &vocabulary));
+    let rms = (audio.iter().map(|x| x * x).sum::<f32>() / audio.len().max(1) as f32).sqrt();
+    ears.report.lock().unwrap().last_sentence_db = Some(db(rms));
+    let text = clean(&transcribe(ctx, &louder(audio), &first, &vocabulary));
     ears.note_heard(&text);
     if armed {
         let request = after_any(&text, &words).unwrap_or(text);
@@ -535,9 +560,14 @@ pub fn start(app: AppHandle) {
                     m.down.process(&chunk, &mut pcm);
                     let utterances = vad.push(&pcm);
                     {
-                        // A slowly fading "loudest recently", for /micro.
+                        // "Loudest in the last half minute", for /micro.
                         let mut r = ears.report.lock().unwrap();
-                        r.peak = (r.peak * 0.999).max(vad_peak_value(&pcm));
+                        let loud = vad_peak_value(&pcm);
+                        let stale = r.peak_at.map_or(true, |t| t.elapsed() > Duration::from_secs(30));
+                        if stale || loud > r.peak {
+                            r.peak = loud;
+                            r.peak_at = Some(Instant::now());
+                        }
                     }
                     for utterance in utterances {
                         handle(&app, &ears, model.as_ref().unwrap(), &utterance);
@@ -600,6 +630,19 @@ mod tests {
         let click: Vec<f32> = (0..RATE / 10).map(|i| (i as f32 * 0.05).sin() * 0.2).collect();
         vad.push(&click);
         assert!(vad.push(&quiet).is_empty());
+    }
+
+    #[test]
+    fn quiet_sentences_are_boosted() {
+        let quiet: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.05).sin() * 0.01).collect();
+        let boosted = louder(&quiet);
+        let rms = (boosted.iter().map(|x| x * x).sum::<f32>() / boosted.len() as f32).sqrt();
+        assert!((0.095..=0.105).contains(&rms), "brought to a normal speaking level: {rms}");
+        let whisper: Vec<f32> = quiet.iter().map(|x| x * 0.1).collect();
+        let rms = (louder(&whisper).iter().map(|x| x * x).sum::<f32>() / whisper.len() as f32).sqrt();
+        assert!(rms < 0.03, "never more than x30: {rms}");
+        let loud: Vec<f32> = quiet.iter().map(|x| x * 80.0).collect();
+        assert_eq!(louder(&loud), loud, "already loud: untouched");
     }
 
     #[test]
