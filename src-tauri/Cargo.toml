@@ -1,6 +1,6 @@
 [package]
 name = "claude-pet"
-version = "0.4.0"
+version = "0.4.1"
 description = "A tiny desktop pet that chats through the local Claude Code CLI"
 license = "MIT"
 edition = "2021"

@@ -90,6 +90,8 @@ fn fetch(key: &str, voice: &str, model: &str, text: &str) -> Result<Vec<u8>, Str
         Err(ureq::Error::Status(code, response)) => {
             let detail = response.into_string().unwrap_or_default().to_lowercase();
             Err(match code {
+                401 if detail.contains("unusual") => "ElevenLabs bloque le compte gratuit (activité inhabituelle : VPN ?)".into(),
+                401 if detail.contains("permission") => "la clé ElevenLabs n'a pas l'accès « Synthèse vocale »".into(),
                 401 => "ElevenLabs refuse la clé (vérifie-la avec /settings elevenkey)".into(),
                 402 => "ElevenLabs : cette voix demande un abonnement payant".into(),
                 404 => "ElevenLabs ne trouve pas cette voix (vérifie /settings elevenvoice)".into(),

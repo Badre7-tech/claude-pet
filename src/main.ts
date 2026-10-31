@@ -55,6 +55,12 @@ function hideBubble() {
 const tts = "speechSynthesis" in window ? window.speechSynthesis : undefined;
 let voiceOn = true;
 let elevenOn = false;
+/** "elevenlabs", "windows" or "mix" (ElevenLabs only for short answers). */
+let engine = "elevenlabs";
+let cartoon = false;
+let cartoonPitch = 1.7;
+/** Answers up to this long use ElevenLabs in "mix" mode; longer ones the free Windows voice. */
+const MIX_MAX = 180;
 let frenchVoice: SpeechSynthesisVoice | undefined;
 /** Long answers: only the start is read aloud (the bubble has the rest), to save credits. */
 const VOICE_MAX = 600;
@@ -77,7 +83,7 @@ let audio: AudioContext | undefined;
 let clip: AudioBufferSourceNode | undefined;
 /** Bumped whenever speech starts or stops, so a late ElevenLabs answer is dropped. */
 let voiceTurn = 0;
-let voiceProblemShown = false;
+let lastVoiceProblem = "";
 /** The line being read by the Windows voice, so a cancelled one can't touch the bubble later. */
 let current: SpeechSynthesisUtterance | undefined;
 
@@ -125,7 +131,9 @@ function windowsVoice(line: string, turn: number) {
   const utterance = new SpeechSynthesisUtterance(line);
   utterance.lang = frenchVoice?.lang ?? "fr-FR";
   if (frenchVoice) utterance.voice = frenchVoice;
-  utterance.rate = 1.05;
+  // Cartoon: higher and a little quicker, like an animated sidekick.
+  utterance.rate = cartoon ? 1.12 : 1.05;
+  utterance.pitch = cartoon ? cartoonPitch : 1;
   utterance.onend = () => {
     if (utterance !== current) return;
     current = undefined;
@@ -144,6 +152,8 @@ async function elevenVoice(line: string, turn: number) {
   if (turn !== voiceTurn) return;
   const source = audio.createBufferSource();
   source.buffer = buffer;
+  // ElevenLabs can't change its pitch, so cartoon mode plays it a bit faster (and higher).
+  if (cartoon) source.playbackRate.value = 1 + (cartoonPitch - 1) * 0.25;
   source.connect(audio.destination);
   source.onended = () => {
     if (clip !== source) return;
@@ -161,16 +171,22 @@ function readAloud(text: string) {
   const turn = voiceTurn;
   // The mouth moves for as long as the voice is going (doneTalking stops it).
   pet.play("talk", 120000);
-  if (!elevenOn) return windowsVoice(line, turn);
-  elevenVoice(line, turn).catch((err) => {
-    if (turn !== voiceTurn) return;
-    const why = String(err);
-    if (!voiceProblemShown && !why.includes("not_configured")) {
-      voiceProblemShown = true;
-      bubbleText.textContent += `\n\n🔈 ${why} — voix Windows en attendant`;
-    }
-    windowsVoice(line, turn);
-  });
+  const useEleven = elevenOn && (engine === "elevenlabs" || (engine === "mix" && line.length <= MIX_MAX));
+  if (!useEleven) return windowsVoice(line, turn);
+  elevenVoice(line, turn)
+    .then(() => {
+      lastVoiceProblem = "";
+    })
+    .catch((err) => {
+      if (turn !== voiceTurn) return;
+      const why = String(err);
+      // Each new problem is shown once, so a fixed one doesn't keep nagging.
+      if (why !== lastVoiceProblem && !why.includes("not_configured")) {
+        lastVoiceProblem = why;
+        bubbleText.textContent += `\n\n🔈 ${why} — voix Windows en attendant`;
+      }
+      windowsVoice(line, turn);
+    });
 }
 
 /** The pet "speaks" a line, out loud too when `aloud` and the voice is on. */
@@ -185,6 +201,9 @@ function applySettings(s: Settings) {
   document.body.dataset.theme = s.theme;
   voiceOn = s.voice;
   elevenOn = s.eleven_key !== "";
+  engine = s.voice_engine;
+  cartoon = s.voice_style === "cartoon";
+  cartoonPitch = s.voice_pitch;
   if (!voiceOn) stopVoice();
 }
 

@@ -32,6 +32,9 @@ export type Settings = {
   eleven_key: string;
   eleven_voice: string;
   eleven_model: string;
+  voice_engine: string;
+  voice_style: string;
+  voice_pitch: number;
 };
 
 export const getPet = () => invoke<Pet>("get_pet");

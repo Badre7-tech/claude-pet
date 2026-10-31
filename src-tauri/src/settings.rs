@@ -31,6 +31,13 @@ pub struct Settings {
     pub eleven_voice: String,
     /// "fast" (cheaper, quicker) or "quality".
     pub eleven_model: String,
+    /// Which voice speaks: "elevenlabs" (when there's a key), "windows" (free, unlimited)
+    /// or "mix" (ElevenLabs for short answers, Windows for long ones, to save credits).
+    pub voice_engine: String,
+    /// "normal" or "cartoon": higher and a bit quicker, like an animated character.
+    pub voice_style: String,
+    /// How high the cartoon voice goes, 1 (normal) to 2 (highest).
+    pub voice_pitch: f32,
 }
 
 /// The ElevenLabs voice picked for Pyrosan.
@@ -56,11 +63,14 @@ impl Default for Settings {
             eleven_key: String::new(),
             eleven_voice: DEFAULT_ELEVEN_VOICE.into(),
             eleven_model: "fast".into(),
+            voice_engine: "elevenlabs".into(),
+            voice_style: "normal".into(),
+            voice_pitch: 1.7,
         }
     }
 }
 
-pub const KEYS: &str = "name, skin, model, voice, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
+pub const KEYS: &str = "name, skin, model, voice, voiceengine, voicestyle, pitch, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
 
 impl Settings {
     pub fn load(dir: &Path) -> Self {
@@ -100,7 +110,12 @@ impl Settings {
             self.skin,
             self.effective_model(),
             on_off(self.voice),
-            if self.eleven_key.is_empty() { " (windows)".to_string() } else { format!(" (elevenlabs {}, {})", self.eleven_voice, self.eleven_model) },
+            {
+                let engine = if self.eleven_key.is_empty() { "windows" } else { self.voice_engine.as_str() };
+                let eleven = if engine == "windows" { String::new() } else { format!(" {} {}", self.eleven_voice, self.eleven_model) };
+                let style = if self.voice_style == "cartoon" { format!(", dessin animé {}", self.voice_pitch) } else { String::new() };
+                format!(" ({engine}{eleven}{style})")
+            },
             self.theme,
             on_off(self.autostart),
             self.speed,
@@ -179,6 +194,35 @@ impl Settings {
                 }
                 self.eleven_voice = value.into();
                 Ok(format!("voix ElevenLabs : {value}"))
+            }
+            "voiceengine" => {
+                self.voice_engine = match value.to_lowercase().as_str() {
+                    "elevenlabs" | "eleven" => "elevenlabs".into(),
+                    "windows" | "gratuit" | "free" => "windows".into(),
+                    "mix" | "mixte" => "mix".into(),
+                    _ => return Err("voiceengine is elevenlabs, windows or mix".into()),
+                };
+                Ok(match self.voice_engine.as_str() {
+                    "windows" => "je parle avec la voix Windows (gratuite, illimitée)".into(),
+                    "mix" => "ElevenLabs pour les réponses courtes, Windows pour les longues".into(),
+                    _ => "je parle avec ElevenLabs".into(),
+                })
+            }
+            "voicestyle" => {
+                self.voice_style = match value.to_lowercase().as_str() {
+                    "cartoon" | "dessin" | "dessin-anime" | "anime" => "cartoon".into(),
+                    "normal" | "normale" => "normal".into(),
+                    _ => return Err("voicestyle is cartoon or normal".into()),
+                };
+                Ok(if self.voice_style == "cartoon" { "voix de dessin animé activée !".into() } else { "voix normale".into() })
+            }
+            "pitch" => {
+                let pitch: f32 = value.replace(',', ".").parse().map_err(|_| "pitch is a number from 1 to 2, like 1.7")?;
+                if !(1.0..=2.0).contains(&pitch) {
+                    return Err("pitch goes from 1 (normal) to 2 (very high)".into());
+                }
+                self.voice_pitch = pitch;
+                Ok(format!("hauteur de la voix dessin animé : {pitch}"))
             }
             "elevenmodel" => {
                 self.eleven_model = match value {
@@ -346,6 +390,14 @@ mod tests {
         assert!(s.set("elevenkey", "not a key").is_err());
         assert!(s.set("elevenvoice", "../x").is_err());
         assert!(s.set("elevenmodel", "quality").is_ok());
+        assert!(s.set("voiceengine", "windows").is_ok());
+        assert_eq!(s.voice_engine, "windows");
+        assert!(s.set("voiceengine", "robot").is_err());
+        assert!(s.set("voicestyle", "dessin").is_ok());
+        assert_eq!(s.voice_style, "cartoon");
+        assert!(s.set("pitch", "1,8").is_ok());
+        assert_eq!(s.voice_pitch, 1.8);
+        assert!(s.set("pitch", "3").is_err());
         assert!(s.set("elevenkey", "off").is_ok());
         assert!(s.eleven_key.is_empty());
         assert!(s.set("skin", "pyro").is_ok());
