@@ -287,7 +287,8 @@ async function talk(msg: string, spoken = false) {
   bubbleEl.classList.add("show", "thinking");
   clearTimeout(bubbleTimer);
   try {
-    speak(await chat(msg), true);
+    // Spoken to → answers out loud; typed to → answers in the bubble only.
+    speak(await chat(msg), spoken);
   } catch (err) {
     pet.play("wiggle");
     say(String(err));
@@ -301,7 +302,7 @@ async function command(input: string) {
   const pep = /^\/(motivate|pep)\b/i.test(input);
   try {
     const out = await runCommand(input);
-    if (pep) speak(out, true);
+    if (pep) speak(out);
     else say(out, 10000);
   } catch (err) {
     say(String(err), 6000);
