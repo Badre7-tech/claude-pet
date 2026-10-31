@@ -199,7 +199,7 @@ pub enum Command {
     Forget,
 }
 
-pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye";
+pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye · \"lance <app>\" opens an app";
 
 pub fn parse(input: &str) -> Result<Command, String> {
     let input = input.trim().trim_start_matches('/');

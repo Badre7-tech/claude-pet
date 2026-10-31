@@ -26,6 +26,9 @@ window, cheers you on while you work, and chats through your local Claude Code C
 - **Voice**: replies are read aloud with a French Windows voice (`/settings voice off` to
   mute, click the pet to hush it).
 - **Pyro**: a black-and-gold dragon skin (`/settings skin pyro`).
+- **Open apps** (v0.3): type or dictate "lance Discord" / "open Spotify" and the app opens
+  the matching shortcut from your Start menu or desktop, without asking Claude. Only your own
+  message can trigger it, never the pet's reply or a web page.
 
 ## Moods
 

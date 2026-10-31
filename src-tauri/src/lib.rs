@@ -1,4 +1,5 @@
 mod chat;
+mod launcher;
 mod personality;
 mod settings;
 mod stats;
@@ -143,9 +144,34 @@ async fn ask_pet(app: &AppHandle, state: &AppState, message: Option<String>) -> 
     Ok(reply)
 }
 
+/// "lance discord": opens the app from the human's own shortcuts, without asking Claude.
+/// None when the message isn't a launch request (or names something that isn't there and
+/// reads more like a sentence), so it goes to Claude as usual.
+fn launch(app: &AppHandle, state: &AppState, message: &str) -> Option<Result<String, String>> {
+    use tauri_plugin_opener::OpenerExt;
+    let pet_name = state.settings.lock().unwrap().display_name();
+    let wanted = launcher::requested_app(message, &pet_name)?;
+    let Some((name, path)) = launcher::find(&wanted, &launcher::shortcut_dirs()) else {
+        if wanted.split(' ').count() > 3 {
+            return None;
+        }
+        return Some(Err(format!("je ne trouve pas « {wanted} » dans ton menu Démarrer ni sur ton bureau")));
+    };
+    Some(match app.opener().open_path(path.to_string_lossy(), None::<&str>) {
+        Ok(()) => {
+            with_pet(app, Pet::chatted);
+            Ok(format!("c'est parti, j'ouvre {name} !"))
+        }
+        Err(e) => Err(format!("je n'ai pas réussi à ouvrir {name} ({e})")),
+    })
+}
+
 #[tauri::command]
 async fn chat(app: AppHandle, state: State<'_, AppState>, message: String) -> Result<String, String> {
     let message = chat::clean_message(&message)?;
+    if let Some(reply) = launch(&app, &state, &message) {
+        return reply;
+    }
     let reply = ask_pet(&app, &state, Some(message)).await?;
     with_pet(&app, Pet::chatted);
     Ok(reply)
