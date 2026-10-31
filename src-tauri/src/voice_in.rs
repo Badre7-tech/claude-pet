@@ -24,6 +24,8 @@ const END_FRAMES: usize = 40; // 800 ms of quiet ends it
 const PREROLL_FRAMES: usize = 15; // keep 300 ms from before it started
 const MIN_VOICED_FRAMES: usize = 15; // ignore clicks and bumps under 300 ms
 const MAX_FRAMES: usize = 15 * 50; // 15 s
+/// Quietest 20 ms that can still count as voice (about -46 dB), for low-gain headset mics.
+const MIN_VOICE: f32 = 0.005;
 /// After "Hey Pyrosan" alone (or the shortcut), how long the pet waits for the request.
 const FOLLOW_UP: Duration = Duration::from_secs(8);
 
@@ -70,7 +72,7 @@ pub struct Vad {
 impl Default for Vad {
     fn default() -> Self {
         Self {
-            floor: 0.005,
+            floor: 0.003,
             partial: Vec::new(),
             preroll: Default::default(),
             utterance: Vec::new(),
@@ -98,7 +100,7 @@ impl Vad {
         while self.partial.len() >= FRAME {
             let frame: Vec<f32> = self.partial.drain(..FRAME).collect();
             let rms = (frame.iter().map(|x| x * x).sum::<f32>() / FRAME as f32).sqrt();
-            let voiced = rms > (self.floor * 3.0).max(0.012);
+            let voiced = rms > (self.floor * 2.5).max(MIN_VOICE);
             if !self.talking {
                 // The background level follows the room while nobody's talking.
                 self.floor = (self.floor * 0.97 + rms * 0.03).clamp(0.001, 0.05);
@@ -196,6 +198,11 @@ pub fn clean(text: &str) -> String {
     out
 }
 
+/// Loudest 20 ms block in some 16 kHz audio.
+fn vad_peak_value(pcm: &[f32]) -> f32 {
+    pcm.chunks(FRAME).map(|f| (f.iter().map(|x| x * x).sum::<f32>() / f.len() as f32).sqrt()).fold(0.0, f32::max)
+}
+
 /// What the window shows: listening, thinking, idle (with a note), or a problem.
 #[derive(Clone, Serialize)]
 pub struct Listen {
@@ -213,11 +220,67 @@ pub struct Ears {
     speaking: AtomicBool,
     armed_until: Mutex<Option<Instant>>,
     name: Mutex<String>,
+    /// What /micro reports: which mic, how loud, what was last understood, what went wrong.
+    report: Mutex<Report>,
+}
+
+#[derive(Default)]
+struct Report {
+    model: Option<bool>,
+    mic: String,
+    peak: f32,
+    heard: Vec<String>,
+    problem: String,
+}
+
+impl Ears {
+    /// A plain-French summary of the listening state, for /micro.
+    pub fn describe(&self) -> String {
+        let r = self.report.lock().unwrap();
+        let wake = self.wake.load(Ordering::SeqCst);
+        let model = match r.model {
+            Some(true) => "chargé ✅",
+            Some(false) => "introuvable ❌",
+            None => "pas encore chargé",
+        };
+        let mic = if r.mic.is_empty() { "pas encore ouvert".to_string() } else { r.mic.clone() };
+        let level = if r.peak <= 0.0 {
+            "rien reçu".to_string()
+        } else {
+            let db = 20.0 * r.peak.log10();
+            let verdict = if r.peak < MIN_VOICE * 2.0 { " (très faible : monte le volume du micro dans Windows)" } else { "" };
+            format!("{db:.0} dB{verdict}")
+        };
+        let heard = if r.heard.is_empty() { "rien".to_string() } else { r.heard.iter().map(|h| format!("« {h} »")).collect::<Vec<_>>().join(" · ") };
+        let mut out = format!(
+            "écoute « Hey {} » : {}\nmodèle vocal : {model}\nmicro : {mic}\nvolume max récent : {level}\nderniers mots entendus : {heard}",
+            self.name.lock().unwrap(),
+            if wake { "oui" } else { "non" }
+        );
+        if !r.problem.is_empty() {
+            out.push_str(&format!("\nproblème : {}", r.problem));
+        }
+        out
+    }
+
+    fn note_heard(&self, text: &str) {
+        let mut r = self.report.lock().unwrap();
+        r.heard.push(if text.is_empty() { "…".into() } else { text.to_string() });
+        if r.heard.len() > 3 {
+            r.heard.remove(0);
+        }
+    }
 }
 
 impl Ears {
     pub fn new(wake: bool, name: String) -> Self {
-        Self { wake: AtomicBool::new(wake), speaking: AtomicBool::new(false), armed_until: Mutex::new(None), name: Mutex::new(name) }
+        Self {
+            wake: AtomicBool::new(wake),
+            speaking: AtomicBool::new(false),
+            armed_until: Mutex::new(None),
+            name: Mutex::new(name),
+            report: Mutex::new(Report::default()),
+        }
     }
 
     pub fn set_wake(&self, on: bool) {
@@ -292,6 +355,7 @@ struct Mic {
     _stream: cpal::Stream,
     rx: Receiver<Vec<f32>>,
     down: Downsampler,
+    name: String,
 }
 
 fn open_mic() -> Result<Mic, String> {
@@ -327,7 +391,8 @@ fn open_mic() -> Result<Mic, String> {
     }
     .map_err(|e| format!("micro inutilisable ({e})"))?;
     stream.play().map_err(|e| format!("micro inutilisable ({e})"))?;
-    Ok(Mic { _stream: stream, rx, down: Downsampler::new(rate) })
+    let name = device.name().unwrap_or_else(|_| "micro par défaut".into());
+    Ok(Mic { _stream: stream, rx, down: Downsampler::new(rate), name: format!("{name} ({rate} Hz, {channels} canal/aux)") })
 }
 
 fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio: &[f32]) {
@@ -340,6 +405,7 @@ fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio:
         tell(app, "thinking", "");
     }
     let text = clean(&transcribe(ctx, audio, &name));
+    ears.note_heard(&text);
     if armed {
         let request = after_wake_word(&text, &name).unwrap_or(text);
         if request.is_empty() {
@@ -386,8 +452,15 @@ pub fn start(app: AppHandle) {
                         .map_err(|e| format!("modèle vocal illisible ({e})"))
                 });
                 match loaded {
-                    Ok(ctx) => model = Some(ctx),
+                    Ok(ctx) => {
+                        ears.report.lock().unwrap().model = Some(true);
+                        model = Some(ctx)
+                    }
                     Err(e) => {
+                        let mut r = ears.report.lock().unwrap();
+                        r.model = Some(false);
+                        r.problem = e.clone();
+                        drop(r);
                         if armed.is_some() || !complained {
                             tell(&app, "error", e);
                             complained = true;
@@ -400,8 +473,15 @@ pub fn start(app: AppHandle) {
             }
             if mic.is_none() {
                 match open_mic() {
-                    Ok(m) => mic = Some(m),
+                    Ok(m) => {
+                        let mut r = ears.report.lock().unwrap();
+                        r.mic = m.name.clone();
+                        r.problem.clear();
+                        drop(r);
+                        mic = Some(m)
+                    }
                     Err(e) => {
+                        ears.report.lock().unwrap().problem = e.clone();
                         if armed.is_some() || !complained {
                             tell(&app, "error", e);
                             complained = true;
@@ -421,7 +501,13 @@ pub fn start(app: AppHandle) {
                     }
                     let mut pcm = Vec::with_capacity(chunk.len() / 2);
                     m.down.process(&chunk, &mut pcm);
-                    for utterance in vad.push(&pcm) {
+                    let utterances = vad.push(&pcm);
+                    {
+                        // A slowly fading "loudest recently", for /micro.
+                        let mut r = ears.report.lock().unwrap();
+                        r.peak = (r.peak * 0.999).max(vad_peak_value(&pcm));
+                    }
+                    for utterance in utterances {
                         handle(&app, &ears, model.as_ref().unwrap(), &utterance);
                     }
                 }

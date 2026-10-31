@@ -34,6 +34,7 @@ const COMMANDS: { cmd: string; hint: string; args?: Arg[]; keys?: Arg[] }[] = [
   { cmd: "memories", hint: "what i remember about you" },
   { cmd: "forget", hint: "erase everything i remember" },
   { cmd: "reminders", hint: "my reminders and timers" },
+  { cmd: "micro", hint: "check that i can hear you" },
   { cmd: "cancel", hint: "cancel a reminder", args: [{ name: "all", hint: "all of them" }] },
   { cmd: "motivate", hint: "pep talk right now" },
   { cmd: "stats", hint: "exact stat numbers" },

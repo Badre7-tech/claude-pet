@@ -313,9 +313,10 @@ pub enum Command {
     Forget,
     Reminders,
     Cancel(Option<usize>),
+    Micro,
 }
 
-pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /reminders · /cancel <n|all> · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye · \"lance <app>\" opens an app";
+pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /reminders · /cancel <n|all> · /micro · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye · \"lance <app>\" opens an app";
 
 pub fn parse(input: &str) -> Result<Command, String> {
     let input = input.trim().trim_start_matches('/');
@@ -339,6 +340,7 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "memories" | "memoire" | "mémoire" => Ok(Command::Memories),
         "forget" | "oublie" => Ok(Command::Forget),
         "reminders" | "rappels" | "timers" => Ok(Command::Reminders),
+        "micro" | "mic" | "micros" => Ok(Command::Micro),
         "cancel" | "annule" => match rest {
             "all" | "tout" | "tous" => Ok(Command::Cancel(None)),
             n => n.parse().map(|n| Command::Cancel(Some(n))).map_err(|_| "usage: /cancel <number> or /cancel all".into()),
@@ -366,6 +368,7 @@ mod tests {
         assert_eq!(parse("/memories"), Ok(Command::Memories));
         assert_eq!(parse("/forget"), Ok(Command::Forget));
         assert_eq!(parse("/rappels"), Ok(Command::Reminders));
+        assert_eq!(parse("/micro"), Ok(Command::Micro));
         assert_eq!(parse("/cancel 2"), Ok(Command::Cancel(Some(2))));
         assert_eq!(parse("/cancel all"), Ok(Command::Cancel(None)));
         assert!(parse("/cancel").is_err());

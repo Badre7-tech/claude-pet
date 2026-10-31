@@ -400,6 +400,7 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
             Ok("all my notes are gone. fresh brain!".into())
         }
         Command::Reminders => Ok(state.reminders.lock().unwrap().describe(chrono::Local::now())),
+        Command::Micro => Ok(app.state::<voice_in::Ears>().describe()),
         Command::Cancel(which) => {
             let mut list = state.reminders.lock().unwrap();
             let reply = match which {
@@ -441,15 +442,19 @@ async fn tts(app: AppHandle, state: State<'_, AppState>, text: String) -> Result
 
 /// Ctrl+Space: brings the pet up with the chat box ready, then the window starts dictation.
 fn summon(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    let window = app.get_webview_window("main");
+    if let Some(window) = &window {
         let _ = window.show();
-        let _ = window.set_focus();
     }
     if voice_in::model_path(app).is_some() {
         // Listen with the local speech model: talk, and it sends by itself.
         app.state::<voice_in::Ears>().arm();
         let _ = app.emit("listen", voice_in::Listen { state: "listening", text: String::new() });
     } else {
+        // Typing needs the focus, so only this fallback takes it.
+        if let Some(window) = &window {
+            let _ = window.set_focus();
+        }
         let _ = app.emit("dictate", ());
     }
 }

@@ -57,6 +57,12 @@ export class Panel {
     el.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((btn) =>
       btn.addEventListener("click", () => onAction(btn.dataset.action as PanelAction)),
     );
+    // Buttons never take the keyboard focus: otherwise a later Space or Enter, meant for
+    // another app, would press them again.
+    el.querySelectorAll<HTMLButtonElement>("button").forEach((btn) => {
+      btn.tabIndex = -1;
+      btn.addEventListener("mousedown", (e) => e.preventDefault());
+    });
     this.sleepBtn = el.querySelector('[data-action="sleep"]')!;
 
     const form = el.querySelector<HTMLFormElement>(".chat")!;
