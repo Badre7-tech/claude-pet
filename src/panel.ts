@@ -147,6 +147,11 @@ export class Panel {
     this.sleepBtn.textContent = pet.asleep ? "wake" : "sleep";
   }
 
+  /** Puts the cursor in the chat box (which also keeps the panel open). */
+  focusInput() {
+    this.input.focus();
+  }
+
   setThinking(thinking: boolean) {
     this.sendBtn.disabled = thinking;
   }

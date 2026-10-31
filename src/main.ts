@@ -3,13 +3,17 @@ import {
   chat,
   getPet,
   getSettings,
+  onDictate,
   onNudge,
   onReaction,
+  onReminder,
   onSettings,
   onStats,
   openPersonality,
   quit,
   runCommand,
+  startDictation,
+  ttsAudio,
   type Pet,
   type Reaction,
   type Settings,
@@ -46,11 +50,14 @@ function hideBubble() {
   bubbleEl.classList.remove("show");
 }
 
-// ---------- voice: replies read aloud with the system's text-to-speech (Windows voices) ----------
+// ---------- voice: ElevenLabs when it's set up, otherwise the Windows voice ----------
 
 const tts = "speechSynthesis" in window ? window.speechSynthesis : undefined;
 let voiceOn = true;
+let elevenOn = false;
 let frenchVoice: SpeechSynthesisVoice | undefined;
+/** Long answers: only the start is read aloud (the bubble has the rest), to save credits. */
+const VOICE_MAX = 600;
 
 /** Prefers a French voice, and the natural-sounding ones when Windows has them. */
 function pickVoice() {
@@ -66,13 +73,24 @@ if (tts) {
   tts.addEventListener("voiceschanged", pickVoice);
 }
 
-const speaking = () => tts?.speaking ?? false;
-/** The line being read right now, so a cancelled one can't touch the bubble later. */
+let audio: AudioContext | undefined;
+let clip: AudioBufferSourceNode | undefined;
+/** Bumped whenever speech starts or stops, so a late ElevenLabs answer is dropped. */
+let voiceTurn = 0;
+let voiceProblemShown = false;
+/** The line being read by the Windows voice, so a cancelled one can't touch the bubble later. */
 let current: SpeechSynthesisUtterance | undefined;
 
+const speaking = () => (tts?.speaking ?? false) || clip !== undefined;
+
 function stopVoice() {
+  voiceTurn++;
   current = undefined;
   tts?.cancel();
+  const playing = clip;
+  clip = undefined;
+  playing?.stop();
+  pet.settle();
 }
 
 /** What's worth saying out loud: no links, *sound effects*, emoji or markdown symbols. */
@@ -87,37 +105,86 @@ function forSpeech(text: string) {
     .trim();
 }
 
-function readAloud(text: string) {
-  if (!tts || !voiceOn) return;
-  stopVoice();
-  const line = forSpeech(text);
-  if (!line) return;
+/** The first sentences of `text` that fit in `max` characters. */
+function firstPart(text: string, max: number) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  return end > max / 3 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(" "))}…`;
+}
+
+/** Talking is over: stop moving the mouth, and let the bubble go a few seconds later. */
+function doneTalking() {
+  pet.settle();
+  clearTimeout(bubbleTimer);
+  bubbleTimer = window.setTimeout(hideBubble, 4000);
+}
+
+function windowsVoice(line: string, turn: number) {
+  if (!tts || turn !== voiceTurn) return pet.settle();
   const utterance = new SpeechSynthesisUtterance(line);
   utterance.lang = frenchVoice?.lang ?? "fr-FR";
   if (frenchVoice) utterance.voice = frenchVoice;
   utterance.rate = 1.05;
-  // Once it's done talking, the bubble can go away a few seconds later.
   utterance.onend = () => {
     if (utterance !== current) return;
     current = undefined;
-    clearTimeout(bubbleTimer);
-    bubbleTimer = window.setTimeout(hideBubble, 4000);
+    doneTalking();
   };
   current = utterance;
   tts.speak(utterance);
 }
 
-/** The pet "speaks" a line Claude wrote, out loud too when `aloud` and the voice is on. */
+async function elevenVoice(line: string, turn: number) {
+  const mp3 = await ttsAudio(line);
+  if (turn !== voiceTurn) return;
+  audio ??= new AudioContext();
+  if (audio.state === "suspended") await audio.resume();
+  const buffer = await audio.decodeAudioData(mp3);
+  if (turn !== voiceTurn) return;
+  const source = audio.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audio.destination);
+  source.onended = () => {
+    if (clip !== source) return;
+    clip = undefined;
+    doneTalking();
+  };
+  clip = source;
+  source.start();
+}
+
+function readAloud(text: string) {
+  stopVoice();
+  const line = firstPart(forSpeech(text), VOICE_MAX);
+  if (!line || !voiceOn) return;
+  const turn = voiceTurn;
+  // The mouth moves for as long as the voice is going (doneTalking stops it).
+  pet.play("talk", 120000);
+  if (!elevenOn) return windowsVoice(line, turn);
+  elevenVoice(line, turn).catch((err) => {
+    if (turn !== voiceTurn) return;
+    const why = String(err);
+    if (!voiceProblemShown && !why.includes("not_configured")) {
+      voiceProblemShown = true;
+      bubbleText.textContent += `\n\n🔈 ${why} — voix Windows en attendant`;
+    }
+    windowsVoice(line, turn);
+  });
+}
+
+/** The pet "speaks" a line, out loud too when `aloud` and the voice is on. */
 function speak(text: string, aloud = false) {
-  const voiced = aloud && voiceOn && !!tts;
-  pet.play("talk", voiced ? Math.min(20000, 400 + text.length * 55) : Math.min(3000, 400 + text.length * 25));
   say(text);
-  if (voiced) readAloud(text);
+  if (aloud && voiceOn) readAloud(text);
+  else pet.play("talk", Math.min(3000, 400 + text.length * 25));
 }
 
 function applySettings(s: Settings) {
   pet.setSkin(s.skin);
+  document.body.dataset.theme = s.theme;
   voiceOn = s.voice;
+  elevenOn = s.eleven_key !== "";
   if (!voiceOn) stopVoice();
 }
 
@@ -230,6 +297,17 @@ void onStats(render);
 void onReaction(react);
 void onSettings(applySettings);
 void onNudge(speak);
+// Reminders pop up, wiggle and are said out loud.
+void onReminder((text) => {
+  pet.play("wiggle");
+  setTimeout(() => speak(text, true), 600);
+});
+// Ctrl+Space: the chat box gets the cursor, then Windows voice typing starts in it.
+void onDictate(() => {
+  stopVoice();
+  panel.focusInput();
+  setTimeout(() => startDictation().catch((err) => say(String(err), 5000)), 250);
+});
 void listen("farewell", () => void farewell()); // Quit from the tray
 void Promise.all([getPet(), getSettings()]).then(([p, s]) => {
   applySettings(s);

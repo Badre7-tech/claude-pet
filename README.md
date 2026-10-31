@@ -29,6 +29,17 @@ window, cheers you on while you work, and chats through your local Claude Code C
 - **Open apps** (v0.3): type or dictate "lance Discord" / "open Spotify" and the app opens
   the matching shortcut from your Start menu or desktop, without asking Claude. Only your own
   message can trigger it, never the pet's reply or a web page.
+- **Computer controls** (v0.4): "monte le son", "mets le son à 30", "coupe le son", "pause",
+  "musique suivante", "ferme Discord", "verrouille le PC", "mets le PC en veille". A fixed list,
+  handled locally like opening apps.
+- **Reminders and timers** (v0.4): "rappelle-moi dans 20 minutes de…", "rappelle-moi demain à
+  9h de…", "tous les jours à 8h rappelle-moi de…", "minuteur 10 min"; `/reminders`, `/cancel`.
+  Saved on disk and said out loud when due.
+- **ElevenLabs voice** (v0.4): `/settings elevenkey <key>`; every clip is cached on disk so a
+  sentence is only paid for once, long answers are only read up to ~600 characters, and any
+  problem falls back to the Windows voice. The mouth moves for as long as the voice speaks.
+- **Ctrl+Space** brings the pet up and starts Windows voice typing in its chat box.
+- **Dark theme** (default) and **start with Windows** (`/settings theme`, `/settings autostart`).
 
 ## Moods
 

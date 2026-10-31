@@ -76,12 +76,12 @@ fn shorten(text: &str, max: usize) -> String {
 }
 
 /// Reads JSON from `path`, or the default when it's missing or unreadable.
-fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
+pub(crate) fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
     fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 /// Writes to a temp file first so a crash mid-write can't corrupt the file.
-fn save_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+pub(crate) fn save_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -276,7 +276,8 @@ pub fn clean_message(raw: &str) -> Result<String, String> {
 }
 
 pub fn build_prompt(name: &str, status: &str, notes: &Notes, history: &History, message: &str) -> String {
-    let mut prompt = format!("[your name] {name}\n[your current state] {status}\n");
+    let now = crate::reminders::local_now_text(chrono::Local::now());
+    let mut prompt = format!("[your name] {name}\n[local time] {now}\n[your current state] {status}\n");
     if !notes.items.is_empty() {
         prompt.push_str("[things the human asked you to remember]\n");
         for note in &notes.items {
@@ -456,7 +457,8 @@ mod tests {
         let mut h = History::default();
         h.push("hi".into(), "hello!".into());
         let p = build_prompt("Pip", "food 50/100", &Notes::default(), &h, "how are you?");
-        assert!(p.starts_with("[your name] Pip\n[your current state] food 50/100"));
+        assert!(p.starts_with("[your name] Pip\n[local time] "));
+        assert!(p.contains("\n[your current state] food 50/100"));
         assert!(!p.contains("[things the human asked you to remember]"));
         assert!(p.contains("human: hi\nyou: hello!"));
         assert!(p.contains("[human says]\nhow are you?"));

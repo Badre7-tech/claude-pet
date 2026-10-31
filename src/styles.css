@@ -7,6 +7,11 @@
   --good: #6aa86b;
   --warn: #e0a43a;
   --bad: #d65745;
+  --field: #fff;
+  --hover: #fdeee6;
+  --track: #f1e4da;
+  --on-accent: #fff;
+  --shadow: rgba(43, 27, 23, 0.14);
   --pet-size: 128px;
   --panel-h: 150px;
   font-family: "Segoe UI", system-ui, sans-serif;
@@ -30,6 +35,26 @@ body {
 #app {
   position: relative;
   height: 100%;
+}
+
+/* Dark bubbles: black and gold, like Pyrosan. */
+body[data-theme="dark"] {
+  --ink: #f3e9d2;
+  --paper: #17141c;
+  --paper-edge: #6b5524;
+  --muted: #a99d86;
+  --accent: #e8bc4e;
+  --field: #221d29;
+  --hover: #2d2535;
+  --track: #2c2633;
+  --on-accent: #1a1206;
+  --shadow: rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+}
+
+body[data-theme="dark"] .bubble,
+body[data-theme="dark"] .panel {
+  box-shadow: 0 0 0 1px rgba(232, 188, 78, 0.12), 0 4px 16px var(--shadow);
 }
 
 /* ---------- pet (sprite sheet, see src/pet.ts) ---------- */
@@ -64,7 +89,7 @@ body {
   background: var(--paper);
   border: 1px solid var(--paper-edge);
   border-radius: 14px;
-  box-shadow: 0 2px 8px rgba(43, 27, 23, 0.12);
+  box-shadow: 0 2px 8px var(--shadow);
   line-height: 1.4;
   user-select: text;
   opacity: 0;
@@ -126,7 +151,7 @@ body {
   background: var(--paper);
   border: 1px solid var(--paper-edge);
   border-radius: 14px;
-  box-shadow: 0 2px 10px rgba(43, 27, 23, 0.14);
+  box-shadow: 0 2px 10px var(--shadow);
   opacity: 0;
   translate: 0 8px;
   pointer-events: none;
@@ -179,7 +204,7 @@ body {
 .stat-track {
   height: 7px;
   border-radius: 4px;
-  background: #f1e4da;
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -209,7 +234,7 @@ button {
   font: inherit;
   color: var(--ink);
   border: 1px solid var(--paper-edge);
-  background: #fff;
+  background: var(--field);
   border-radius: 9px;
   padding: 5px 0;
   cursor: pointer;
@@ -217,7 +242,7 @@ button {
 }
 
 button:hover {
-  background: #fdeee6;
+  background: var(--hover);
 }
 
 button:active {
@@ -248,7 +273,7 @@ input:focus-visible {
   padding: 5px 9px;
   border: 1px solid var(--paper-edge);
   border-radius: 9px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   user-select: text;
 }
@@ -258,7 +283,7 @@ input:focus-visible {
   padding: 0;
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* command autocomplete, floating above the chat box */
@@ -275,7 +300,7 @@ input:focus-visible {
   margin: 0;
   padding: 4px;
   list-style: none;
-  background: #fff;
+  background: var(--field);
   border: 1px solid var(--paper-edge);
   border-radius: 10px;
   box-shadow: 0 4px 14px rgba(43, 27, 23, 0.16);
@@ -293,7 +318,7 @@ input:focus-visible {
 }
 
 .suggest li[aria-selected="true"] {
-  background: #fdeee6;
+  background: var(--hover);
 }
 
 .suggest b {

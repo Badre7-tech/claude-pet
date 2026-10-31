@@ -76,8 +76,15 @@ const ANIMS = {
     { sx: 0.98, sy: 1.02, eyes: "open", mouth: "grin", a: 1, t: 0.75 },
     { sx: 1, sy: 1, eyes: "open", mouth: "smile", a: 1, t: 0.87 },
   ] },
-  talk: { fps: 8, loop: true, frames: range(4, (i) => ({
-    sx: 1, sy: i % 2 ? 1.01 : 1, eyes: "open", mouth: ["open", "openSmall", "smile", "open"][i], a: 0.5, t: i / 4,
+  // Eight mouth shapes in a speech-like rhythm, with a small bob and one blink.
+  talk: { fps: 10, loop: true, frames: range(8, (i) => ({
+    sx: 1,
+    sy: [1, 1.02, 1.01, 1, 1.02, 1, 1.01, 1][i],
+    ty: [0, -1, 0, 0, -1, 0, 0, 0][i],
+    eyes: i === 5 ? "blink" : "open",
+    mouth: ["talkWide", "talkMid", "openSmall", "talkWide", "talkMid", "flat", "talkWide", "openSmall"][i],
+    a: 0.5,
+    t: i / 8,
   })) },
   wiggle: { fps: 10, loop: false, frames: [-9, 8, -6, 4, -2, 0].map((rot, i) => ({
     rot, sx: 1, sy: 1, eyes: i < 4 ? "happy" : "open", mouth: "grin", a: 0.9, t: i / 6, fx: { heart: i / 5 },
@@ -138,6 +145,11 @@ function mouth(kind, y, cat) {
       return `<ellipse cx="64" cy="${y + 1}" rx="4.2" ry="4" fill="${INK}"/>`;
     case "openSmall":
       return `<ellipse cx="64" cy="${y + 1}" rx="3" ry="2.2" fill="${INK}"/>`;
+    // Talking: a big "aah" with a tongue and a medium "eh", so the mouth clearly moves.
+    case "talkWide":
+      return `<ellipse cx="64" cy="${y + 1.6}" rx="5.8" ry="5.6" fill="${INK}"/><ellipse cx="64" cy="${y + 4.6}" rx="3.3" ry="1.9" fill="#E5566B"/>`;
+    case "talkMid":
+      return `<ellipse cx="64" cy="${y + 1.2}" rx="5" ry="3.4" fill="${INK}"/><ellipse cx="64" cy="${y + 3}" rx="2.6" ry="1.1" fill="#E5566B"/>`;
   }
 }
 

@@ -20,9 +20,21 @@ pub struct Settings {
     pub skin: String,
     /// Minutes between unprompted pep talks; 0 turns them off.
     pub motivate: u32,
-    /// Read replies aloud with the system's text-to-speech voice.
+    /// Read replies aloud (ElevenLabs when set up, otherwise the Windows voice).
     pub voice: bool,
+    /// Bubble and panel colours: "dark" or "light".
+    pub theme: String,
+    /// Start with Windows.
+    pub autostart: bool,
+    /// ElevenLabs API key; stays in settings.json on this computer, never shown back.
+    pub eleven_key: String,
+    pub eleven_voice: String,
+    /// "fast" (cheaper, quicker) or "quality".
+    pub eleven_model: String,
 }
+
+/// The ElevenLabs voice picked for Pyrosan.
+pub const DEFAULT_ELEVEN_VOICE: &str = "B8gJV1IhpuegLxdpXFOE";
 
 /// Must match the sheets in public/sprites (see scripts/sprites/skins.mjs).
 pub const SKINS: [&str; 6] = ["blob", "sprout", "beancat", "ember", "pyro", "spine"];
@@ -39,11 +51,16 @@ impl Default for Settings {
             skin: "blob".into(),
             motivate: 45,
             voice: true,
+            theme: "dark".into(),
+            autostart: true,
+            eleven_key: String::new(),
+            eleven_voice: DEFAULT_ELEVEN_VOICE.into(),
+            eleven_model: "fast".into(),
         }
     }
 }
 
-pub const KEYS: &str = "name, skin, model, voice, speed, ontop, limit, motivate";
+pub const KEYS: &str = "name, skin, model, voice, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
 
 impl Settings {
     pub fn load(dir: &Path) -> Self {
@@ -78,11 +95,14 @@ impl Settings {
 
     pub fn describe(&self) -> String {
         format!(
-            "name: {} · skin: {} · model: {} · voice: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
+            "name: {} · skin: {} · model: {} · voice: {}{} · theme: {} · autostart: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
             self.display_name(),
             self.skin,
             self.effective_model(),
             on_off(self.voice),
+            if self.eleven_key.is_empty() { " (windows)".to_string() } else { format!(" (elevenlabs {}, {})", self.eleven_voice, self.eleven_model) },
+            self.theme,
+            on_off(self.autostart),
             self.speed,
             on_off(self.on_top),
             self.hourly_limit,
@@ -128,7 +148,45 @@ impl Settings {
             }
             "voice" => {
                 self.voice = parse_on_off(value).ok_or("voice is on or off")?;
-                Ok(if self.voice { "voice on: i'll read my answers out loud".into() } else { "voice off: i'll stay quiet".into() })
+                Ok(if self.voice { "voix activée : je lis mes réponses à voix haute".into() } else { "voix coupée : je reste silencieux".into() })
+            }
+            "theme" => {
+                self.theme = match value.to_lowercase().as_str() {
+                    "dark" | "sombre" | "noir" => "dark".into(),
+                    "light" | "clair" | "blanc" => "light".into(),
+                    _ => return Err("theme is dark or light".into()),
+                };
+                Ok(format!("thème {} !", if self.theme == "dark" { "sombre" } else { "clair" }))
+            }
+            "autostart" => {
+                self.autostart = parse_on_off(value).ok_or("autostart is on or off")?;
+                Ok(if self.autostart { "je démarrerai avec Windows".into() } else { "je ne démarrerai plus avec Windows".into() })
+            }
+            "elevenkey" => {
+                if matches!(value, "off" | "none" | "aucune") {
+                    self.eleven_key.clear();
+                    return Ok("clé ElevenLabs retirée : je reprends la voix Windows".into());
+                }
+                if !crate::tts::valid_key(value) {
+                    return Err("cette clé ElevenLabs n'a pas l'air valide (copie-la en entier)".into());
+                }
+                self.eleven_key = value.into();
+                Ok("clé ElevenLabs enregistrée sur ton PC 🔑 je parle avec ma nouvelle voix !".into())
+            }
+            "elevenvoice" => {
+                if !crate::tts::valid_voice(value) {
+                    return Err("un ID de voix ElevenLabs ressemble à B8gJV1IhpuegLxdpXFOE".into());
+                }
+                self.eleven_voice = value.into();
+                Ok(format!("voix ElevenLabs : {value}"))
+            }
+            "elevenmodel" => {
+                self.eleven_model = match value {
+                    "fast" | "rapide" => "fast".into(),
+                    "quality" | "qualite" | "qualité" => "quality".into(),
+                    _ => return Err("elevenmodel is fast (cheaper) or quality".into()),
+                };
+                Ok(format!("modèle de voix : {}", self.eleven_model))
             }
             "limit" => {
                 let limit: usize = value.parse().map_err(|_| "limit is a whole number")?;
@@ -197,9 +255,11 @@ pub enum Command {
     Remember(String),
     Memories,
     Forget,
+    Reminders,
+    Cancel(Option<usize>),
 }
 
-pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye · \"lance <app>\" opens an app";
+pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /reminders · /cancel <n|all> · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye · \"lance <app>\" opens an app";
 
 pub fn parse(input: &str) -> Result<Command, String> {
     let input = input.trim().trim_start_matches('/');
@@ -222,6 +282,11 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "remember" | "retiens" => Ok(Command::Remember(rest.into())),
         "memories" | "memoire" | "mémoire" => Ok(Command::Memories),
         "forget" | "oublie" => Ok(Command::Forget),
+        "reminders" | "rappels" | "timers" => Ok(Command::Reminders),
+        "cancel" | "annule" => match rest {
+            "all" | "tout" | "tous" => Ok(Command::Cancel(None)),
+            n => n.parse().map(|n| Command::Cancel(Some(n))).map_err(|_| "usage: /cancel <number> or /cancel all".into()),
+        },
         other => Err(format!("unknown command /{other}. try /help")),
     }
 }
@@ -244,6 +309,10 @@ mod tests {
         assert!(parse("/remember").is_err());
         assert_eq!(parse("/memories"), Ok(Command::Memories));
         assert_eq!(parse("/forget"), Ok(Command::Forget));
+        assert_eq!(parse("/rappels"), Ok(Command::Reminders));
+        assert_eq!(parse("/cancel 2"), Ok(Command::Cancel(Some(2))));
+        assert_eq!(parse("/cancel all"), Ok(Command::Cancel(None)));
+        assert!(parse("/cancel").is_err());
         assert!(parse("/settings name").is_err());
         assert!(parse("/dance").is_err());
     }
@@ -268,6 +337,17 @@ mod tests {
         assert!(s.set("voice", "Oui").is_ok());
         assert!(s.voice);
         assert!(s.set("voice", "loud").is_err());
+        assert_eq!(s.theme, "dark");
+        assert!(s.set("theme", "clair").is_ok());
+        assert_eq!(s.theme, "light");
+        assert!(s.set("theme", "pink").is_err());
+        assert!(s.set("elevenkey", "sk_abcdef0123456789").is_ok());
+        assert!(!s.describe().contains("sk_abcdef"), "the key is never shown");
+        assert!(s.set("elevenkey", "not a key").is_err());
+        assert!(s.set("elevenvoice", "../x").is_err());
+        assert!(s.set("elevenmodel", "quality").is_ok());
+        assert!(s.set("elevenkey", "off").is_ok());
+        assert!(s.eleven_key.is_empty());
         assert!(s.set("skin", "pyro").is_ok());
         assert_eq!(s.display_name(), "Pip", "pyro uses the usual name and personality");
         assert!(s.set("limit", "0").is_err());

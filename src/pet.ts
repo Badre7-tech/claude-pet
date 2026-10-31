@@ -65,6 +65,13 @@ export class PetView {
     this.start(anim);
   }
 
+  /** Ends a reaction now (e.g. the voice stopped talking) and goes back to the mood loop. */
+  settle() {
+    if (this.final || this.oneShotUntil === undefined) return;
+    this.oneShotUntil = undefined;
+    this.start(MOOD_ANIM[this.mood]);
+  }
+
   private final = false;
 
   /** Plays `anim` once and stays on its last frame for good; resolves when it has finished. */

@@ -1,9 +1,12 @@
+mod actions;
 mod chat;
 mod launcher;
 mod personality;
+mod reminders;
 mod settings;
 mod stats;
 mod tray;
+mod tts;
 
 use chat::{History, Notes, RateLimiter};
 use settings::{Command, Settings};
@@ -29,6 +32,7 @@ pub struct AppState {
     limiter: Mutex<RateLimiter>,
     history: Mutex<History>,
     notes: Mutex<Notes>,
+    reminders: Mutex<reminders::Reminders>,
     thinking: AtomicBool,
 }
 
@@ -166,10 +170,49 @@ fn launch(app: &AppHandle, state: &AppState, message: &str) -> Option<Result<Str
     })
 }
 
+/// Reminders and timers, understood without Claude.
+fn remind(state: &AppState, message: &str) -> Option<Result<String, String>> {
+    use reminders::Request;
+    let name = state.settings.lock().unwrap().display_name();
+    let now = chrono::Local::now();
+    let request = match reminders::parse(message, &name, now)? {
+        Ok(r) => r,
+        Err(e) => return Some(Err(e)),
+    };
+    let mut list = state.reminders.lock().unwrap();
+    let reply = match request {
+        Request::Add(r) => list.add(r.clone()).map(|_| reminders::confirm(&r, now)),
+        Request::List => Ok(list.describe(now)),
+        Request::Cancel(Some(n)) => list.remove(n).map(|r| format!("rappel annulé : {}", r.text)).ok_or_else(|| format!("pas de rappel n°{n}")),
+        Request::Cancel(None) => {
+            list.clear();
+            Ok("tous les rappels sont annulés".into())
+        }
+        Request::CancelTimers => Ok(match list.clear_timers() {
+            0 => "aucun minuteur en cours".into(),
+            n => format!("{n} minuteur(s) annulé(s)"),
+        }),
+    };
+    if let Err(e) = list.save(&state.data_dir) {
+        eprintln!("failed to save reminders: {e}");
+    }
+    Some(reply)
+}
+
 #[tauri::command]
 async fn chat(app: AppHandle, state: State<'_, AppState>, message: String) -> Result<String, String> {
     let message = chat::clean_message(&message)?;
+    // Things to do on the computer are handled here and never reach Claude.
+    let name = state.settings.lock().unwrap().display_name();
+    if let Some(action) = actions::parse(&message, &name) {
+        let reply = tauri::async_runtime::spawn_blocking(move || actions::run(action)).await.map_err(|e| e.to_string())?;
+        with_pet(&app, Pet::chatted);
+        return reply;
+    }
     if let Some(reply) = launch(&app, &state, &message) {
+        return reply;
+    }
+    if let Some(reply) = remind(&state, &message) {
         return reply;
     }
     let reply = ask_pet(&app, &state, Some(message)).await?;
@@ -287,6 +330,19 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
             notes.save(&state.data_dir).map_err(|e| format!("couldn't forget: {e}"))?;
             Ok("all my notes are gone. fresh brain!".into())
         }
+        Command::Reminders => Ok(state.reminders.lock().unwrap().describe(chrono::Local::now())),
+        Command::Cancel(which) => {
+            let mut list = state.reminders.lock().unwrap();
+            let reply = match which {
+                Some(n) => list.remove(n).map(|r| format!("rappel annulé : {}", r.text)).ok_or_else(|| format!("pas de rappel n°{n}")),
+                None => {
+                    list.clear();
+                    Ok("tous les rappels sont annulés".into())
+                }
+            };
+            let _ = list.save(&state.data_dir);
+            reply
+        }
         Command::Reset { confirmed: false } => {
             Err("this hatches a brand-new pet with fresh stats. type /reset confirm to do it".into())
         }
@@ -298,10 +354,75 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
     }
 }
 
+/// The pet's voice: an MP3 from ElevenLabs (or its cache). Errors make the window use the
+/// Windows voice instead; "not_configured" means there's no ElevenLabs key.
+#[tauri::command]
+async fn tts(app: AppHandle, state: State<'_, AppState>, text: String) -> Result<tauri::ipc::Response, String> {
+    let (key, voice, model) = {
+        let s = state.settings.lock().unwrap();
+        (s.eleven_key.clone(), s.eleven_voice.clone(), tts::model_id(&s.eleven_model).to_string())
+    };
+    let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("voice");
+    let text: String = text.chars().take(1500).collect();
+    tauri::async_runtime::spawn_blocking(move || tts::speak(&cache, &key, &voice, &model, &text))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(tauri::ipc::Response::new)
+}
+
+/// Ctrl+Space: brings the pet up with the chat box ready, then the window starts dictation.
+fn summon(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit("dictate", ());
+}
+
+#[tauri::command]
+fn start_dictation() -> Result<(), String> {
+    actions::start_dictation()
+}
+
+/// Every few seconds: anything due is said out loud (the window pops up if it was hidden).
+fn reminder_loop(app: AppHandle) {
+    loop {
+        thread::sleep(Duration::from_secs(5));
+        let state = app.state::<AppState>();
+        let now = chrono::Local::now().timestamp();
+        let due = {
+            let mut list = state.reminders.lock().unwrap();
+            let due = list.take_due(now);
+            if !due.is_empty() {
+                let _ = list.save(&state.data_dir);
+            }
+            due
+        };
+        for r in due {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
+            let _ = app.emit("reminder", reminders::announce(&r, now));
+        }
+    }
+}
+
+fn apply_autostart(app: &AppHandle, on: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let result = if on { launcher.enable() } else { launcher.disable() };
+    if let Err(e) = result {
+        eprintln!("couldn't change autostart: {e}");
+    }
+}
+
 /// Pushes settings that affect the window, the limiter and the UI.
 fn apply_settings(app: &AppHandle, s: &Settings) {
     let state = app.state::<AppState>();
     state.limiter.lock().unwrap().set_max_calls(s.hourly_limit);
+    if cfg!(not(debug_assertions)) {
+        apply_autostart(app, s.autostart);
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_always_on_top(s.on_top);
     }
@@ -327,6 +448,8 @@ fn place_bottom_right(window: &WebviewWindow) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_pet,
             feed,
@@ -342,6 +465,8 @@ pub fn run() {
             personality::save_personality,
             personality::reset_personality,
             personality::open_personality_file,
+            tts,
+            start_dictation,
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -361,6 +486,11 @@ pub fn run() {
                 )),
                 history: Mutex::new(History::load(&data_dir)),
                 notes: Mutex::new(Notes::load(&data_dir)),
+                reminders: Mutex::new({
+                    let mut list = reminders::Reminders::load(&data_dir);
+                    list.catch_up(chrono::Local::now().timestamp());
+                    list
+                }),
                 thinking: AtomicBool::new(false),
             });
 
@@ -371,6 +501,22 @@ pub fn run() {
             window.set_always_on_top(settings.on_top)?;
             window.show()?;
             tray::build(app.handle())?;
+            if cfg!(not(debug_assertions)) {
+                apply_autostart(app.handle(), settings.autostart);
+            }
+            {
+                use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+                let registered = app.global_shortcut().on_shortcut("ctrl+space", |app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        summon(app);
+                    }
+                });
+                if let Err(e) = registered {
+                    eprintln!("couldn't register Ctrl+Space: {e}");
+                }
+            }
+            let reminders_app = app.handle().clone();
+            thread::spawn(move || reminder_loop(reminders_app));
 
             tauri::async_runtime::spawn(pep_talk_loop(app.handle().clone()));
             let handle = app.handle().clone();

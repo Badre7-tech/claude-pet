@@ -15,10 +15,13 @@ const VERBS: &[&str] = &[
 ];
 
 /// Polite or addressing words allowed before the verb: "hey pyro, tu peux lancer…".
-const PREAMBLE: &[&str] = &[
-    "hey", "he", "ok", "okay", "eh", "dis", "pyro", "jarvis", "tu", "peux", "pourrais", "est", "ce",
-    "que", "stp", "svp", "please", "can", "could", "you", "vas", "y",
+pub(crate) const PREAMBLE: &[&str] = &[
+    "hey", "he", "et", "ok", "okay", "eh", "dis", "pyro", "pyrosan", "jarvis", "tu", "peux", "pourrais",
+    "est", "ce", "que", "stp", "svp", "please", "can", "could", "you", "vas", "y",
 ];
+
+/// Politeness that can trail a command: "monte le son stp".
+const TRAILING: &[&str] = &["stp", "svp", "please", "merci", "maintenant", "now"];
 
 /// Little words around the app's name: "lance-moi le jeu League of Legends stp".
 const FILLERS: &[&str] = &[
@@ -35,7 +38,7 @@ const SKIP: &[&str] = &[
 ];
 
 /// Lowercase, no accents, letters and digits only, single spaces.
-fn normalize(text: &str) -> String {
+pub(crate) fn normalize(text: &str) -> String {
     let mapped: String = text
         .to_lowercase()
         .chars()
@@ -52,6 +55,20 @@ fn normalize(text: &str) -> String {
         })
         .collect();
     mapped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The words of a command once "hey pyrosan, tu peux…" in front and "stp" behind are dropped,
+/// normalized: "Pyrosan, monte le son stp !" → "monte le son".
+pub(crate) fn command_text(message: &str, pet_name: &str) -> String {
+    let text = normalize(message);
+    let pet = normalize(pet_name);
+    let mut words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
+    let skip = words.iter().take_while(|w| PREAMBLE.contains(w) || **w == pet).count();
+    words.drain(..skip);
+    while words.last().is_some_and(|w| TRAILING.contains(w) || *w == pet) {
+        words.pop();
+    }
+    words.join(" ")
 }
 
 /// The app name in "lance league of legends", or None if the message isn't a launch request.
@@ -72,7 +89,7 @@ pub fn requested_app(message: &str, pet_name: &str) -> Option<String> {
         rest = tail;
     }
     while let Some((last, head)) = rest.split_last() {
-        if !FILLERS.contains(last) && *last != pet && !["merci", "maintenant", "now"].contains(last) {
+        if !FILLERS.contains(last) && *last != pet && !TRAILING.contains(last) {
             break;
         }
         rest = head;
@@ -124,8 +141,8 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
-/// How well a shortcut name matches what was asked for; 0 means not at all.
-fn score(name: &str, wanted: &str) -> u32 {
+/// How well a name (shortcut, window, program) matches what was asked for; 0 means not at all.
+pub(crate) fn score(name: &str, wanted: &str) -> u32 {
     let n = normalize(name);
     let q = normalize(wanted);
     if q.is_empty() {
@@ -188,6 +205,13 @@ mod tests {
         assert_eq!(ask("lance"), None);
         assert_eq!(ask("ouvre moi"), None);
         assert_eq!(ask("joue avec moi"), None);
+    }
+
+    #[test]
+    fn strips_politeness_around_commands() {
+        assert_eq!(command_text("Pyrosan, monte le son stp !", "Pyrosan"), "monte le son");
+        assert_eq!(command_text("hey pyrosan est-ce que tu peux couper le son", "Pyrosan"), "couper le son");
+        assert_eq!(command_text("Musique suivante.", "Pyrosan"), "musique suivante");
     }
 
     #[test]

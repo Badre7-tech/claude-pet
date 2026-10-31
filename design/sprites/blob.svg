@@ -304,22 +304,42 @@
       <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
-    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84" rx="4.2" ry="4" fill="#2B1B17"/></g></g></g>
-<g transform="translate(128 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.010) translate(-64 -112)">
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84.6" rx="5.8" ry="5.6" fill="#2B1B17"/><ellipse cx="64" cy="87.6" rx="3.3" ry="1.9" fill="#E5566B"/></g></g></g>
+<g transform="translate(128 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="33.5" ry="4.4" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 111) rotate(0) scale(1.000 1.020) translate(-64 -112)">
+      <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84.2" rx="5" ry="3.4" fill="#2B1B17"/><ellipse cx="64" cy="86" rx="2.6" ry="1.1" fill="#E5566B"/></g></g></g>
+<g transform="translate(256 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.010) translate(-64 -112)">
       <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
     <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84" rx="3" ry="2.2" fill="#2B1B17"/></g></g></g>
-<g transform="translate(256 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.000) translate(-64 -112)">
+<g transform="translate(384 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.000) translate(-64 -112)">
       <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
-    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><path d="M58 83q6 6 12 0" stroke="#2B1B17" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g></g></g>
-<g transform="translate(384 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.010) translate(-64 -112)">
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84.6" rx="5.8" ry="5.6" fill="#2B1B17"/><ellipse cx="64" cy="87.6" rx="3.3" ry="1.9" fill="#E5566B"/></g></g></g>
+<g transform="translate(512 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="33.5" ry="4.4" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 111) rotate(0) scale(1.000 1.020) translate(-64 -112)">
       <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
-    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84" rx="4.2" ry="4" fill="#2B1B17"/></g></g></g>
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84.2" rx="5" ry="3.4" fill="#2B1B17"/><ellipse cx="64" cy="86" rx="2.6" ry="1.1" fill="#E5566B"/></g></g></g>
+<g transform="translate(640 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.000) translate(-64 -112)">
+      <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><path d="M43.5 69h9" stroke="#2B1B17" stroke-width="2.8" stroke-linecap="round" fill="none"/><path d="M75.5 69h9" stroke="#2B1B17" stroke-width="2.8" stroke-linecap="round" fill="none"/><path d="M59.5 84h9" stroke="#2B1B17" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g></g></g>
+<g transform="translate(768 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.010) translate(-64 -112)">
+      <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84.6" rx="5.8" ry="5.6" fill="#2B1B17"/><ellipse cx="64" cy="87.6" rx="3.3" ry="1.9" fill="#E5566B"/></g></g></g>
+<g transform="translate(896 1024)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(0) scale(1.000 1.000) translate(-64 -112)">
+      <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>
+      <path d="M64 24c28 0 48 22 48 50 0 26-21 40-48 40S16 100 16 74c0-28 20-50 48-50z" fill="url(#blob-g)"/><ellipse cx="39" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/>
+    <ellipse cx="89" cy="77" rx="5.5" ry="3.2" fill="#F7A48E" opacity="0.7"/><ellipse cx="48" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="49.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="80" cy="68" rx="4.6" ry="6" fill="#2B1B17"/><circle cx="81.6" cy="65.8" r="1.7" fill="#fff"/><ellipse cx="64" cy="84" rx="3" ry="2.2" fill="#2B1B17"/></g></g></g>
 <g transform="translate(0 1152)" clip-path="url(#cell)"><g opacity="1"><ellipse cx="64" cy="115" rx="34.0" ry="4.5" fill="#2B1B17" opacity="0.18"/><g transform="translate(64 112) rotate(-9) scale(1.000 1.000) translate(-64 -112)">
       <ellipse cx="46" cy="108" rx="10" ry="6" fill="#C4552F"/>
       <ellipse cx="82" cy="108" rx="10" ry="6" fill="#C4552F"/>

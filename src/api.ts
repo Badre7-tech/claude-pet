@@ -27,6 +27,11 @@ export type Settings = {
   skin: string;
   motivate: number;
   voice: boolean;
+  theme: string;
+  autostart: boolean;
+  eleven_key: string;
+  eleven_voice: string;
+  eleven_model: string;
 };
 
 export const getPet = () => invoke<Pet>("get_pet");
@@ -43,3 +48,8 @@ export const onReaction = (cb: (r: Reaction) => void) =>
 export const onSettings = (cb: (s: Settings) => void) =>
   listen<Settings>("settings", (e) => cb(e.payload));
 export const onNudge = (cb: (text: string) => void) => listen<string>("nudge", (e) => cb(e.payload));
+export const onReminder = (cb: (text: string) => void) => listen<string>("reminder", (e) => cb(e.payload));
+export const onDictate = (cb: () => void) => listen("dictate", () => cb());
+/** An MP3 of the pet's ElevenLabs voice saying `text`. */
+export const ttsAudio = (text: string) => invoke<ArrayBuffer>("tts", { text });
+export const startDictation = () => invoke("start_dictation");
