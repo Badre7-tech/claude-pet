@@ -17,6 +17,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const MODEL_FILE: &str = "models/ggml-small-q5_1.bin";
+/// The last sentence heard, as a sound file in the app's data folder (for /micro).
+pub const LAST_SENTENCE: &str = "derniere-phrase.wav";
 const RATE: usize = 16_000;
 const FRAME: usize = RATE / 50; // 20 ms
 const START_FRAMES: usize = 4; // 80 ms of voice starts an utterance
@@ -291,9 +293,14 @@ impl Ears {
         out
     }
 
-    fn note_heard(&self, text: &str) {
+    fn note_heard(&self, text: &str, raw: &Result<String, String>) {
         let mut r = self.report.lock().unwrap();
-        r.heard.push(if text.is_empty() { "…".into() } else { text.to_string() });
+        r.heard.push(match raw {
+            _ if !text.is_empty() => text.to_string(),
+            Ok(raw) if raw.is_empty() => "… (rien reconnu)".into(),
+            Ok(raw) => format!("… (brut : {raw})"),
+            Err(e) => format!("… ({e})"),
+        });
         if r.heard.len() > 3 {
             r.heard.remove(0);
         }
@@ -369,12 +376,11 @@ fn after_any(text: &str, words: &[String]) -> Option<String> {
     words.iter().find_map(|w| after_wake_word(text, w))
 }
 
-fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], name: &str, vocabulary: &str) -> String {
+/// Turns speech into text. `retry` is the second, more patient attempt after an empty result:
+/// no app names in the prompt and, if the first guess is shaky, a few warmer guesses.
+fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], prompt: &str, retry: bool) -> Result<String, String> {
     use whisper_rs::{FullParams, SamplingStrategy};
-    let Ok(mut state) = ctx.create_state() else { return String::new() };
-    // Naming the pet and the user's apps up front helps the model spell them right.
-    let vocabulary: String = vocabulary.chars().take(400).collect();
-    let prompt = if vocabulary.is_empty() { format!("Hey {name}.") } else { format!("{vocabulary}. Hey {name}.") };
+    let mut state = ctx.create_state().map_err(|e| format!("modèle vocal : {e}"))?;
     let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     p.set_language(Some("fr"));
     p.set_n_threads(threads());
@@ -386,15 +392,42 @@ fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], name: &str, vocab
     p.set_single_segment(true);
     p.set_no_timestamps(true);
     p.set_suppress_blank(true);
-    p.set_temperature_inc(0.0);
-    p.set_initial_prompt(&prompt);
+    p.set_temperature_inc(if retry { 0.2 } else { 0.0 });
+    if retry {
+        // Don't drop a segment for looking like silence: we know someone spoke.
+        p.set_no_speech_thold(1.0);
+    }
+    p.set_initial_prompt(prompt);
     // whisper.cpp wants at least a second of audio.
     let mut padded = audio.to_vec();
     padded.resize(padded.len().max(RATE * 6 / 5), 0.0);
-    if state.full(p, &padded).is_err() {
-        return String::new();
+    state.full(p, &padded).map_err(|e| format!("reconnaissance vocale : {e}"))?;
+    Ok(state.as_iter().filter_map(|s| s.to_str_lossy().ok().map(|t| t.into_owned())).collect::<Vec<_>>().join(" ").trim().to_string())
+}
+
+/// Keeps the last sentence as a sound file, to check what the pet really heard.
+fn save_wav(path: &std::path::Path, audio: &[f32]) {
+    let mut bytes = Vec::with_capacity(44 + audio.len() * 2);
+    let data_len = (audio.len() * 2) as u32;
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+    bytes.extend_from_slice(&(RATE as u32).to_le_bytes());
+    bytes.extend_from_slice(&(RATE as u32 * 2).to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    for x in audio {
+        bytes.extend_from_slice(&((x.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
     }
-    state.as_iter().filter_map(|s| s.to_str_lossy().ok().map(|t| t.into_owned())).collect::<Vec<_>>().join(" ")
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, bytes);
 }
 
 struct Mic {
@@ -455,11 +488,22 @@ fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio:
     if armed {
         tell(app, "thinking", "");
     }
-    let vocabulary = ears.vocabulary.lock().unwrap().clone();
+    let vocabulary: String = ears.vocabulary.lock().unwrap().chars().take(300).collect();
     let rms = (audio.iter().map(|x| x * x).sum::<f32>() / audio.len().max(1) as f32).sqrt();
     ears.report.lock().unwrap().last_sentence_db = Some(db(rms));
-    let text = clean(&transcribe(ctx, &louder(audio), &first, &vocabulary));
-    ears.note_heard(&text);
+    let boosted = louder(audio);
+    if let Ok(dir) = app.path().app_data_dir() {
+        save_wav(&dir.join(LAST_SENTENCE), &boosted);
+    }
+    // Naming the pet and the user's apps up front helps the model spell them right.
+    let simple = format!("Hey {}.", words.join(". Hey "));
+    let with_apps = if vocabulary.is_empty() { simple.clone() } else { format!("{vocabulary}. {simple}") };
+    let mut raw = transcribe(ctx, &boosted, &with_apps, false);
+    if raw.as_ref().map_or(true, |t| clean(t).is_empty()) {
+        raw = transcribe(ctx, &boosted, &simple, true);
+    }
+    let text = raw.as_ref().map(|t| clean(t)).unwrap_or_default();
+    ears.note_heard(&text, &raw);
     if armed {
         let request = after_any(&text, &words).unwrap_or(text);
         if request.is_empty() {
@@ -652,5 +696,25 @@ mod tests {
         d.process(&vec![0.5; 48_000], &mut out);
         assert_eq!(out.len(), 16_000);
         assert!((out[100] - 0.5).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod live {
+    /// Real speech through the whole pipeline. Needs the model and test clips in /tmp.
+    #[test]
+    #[ignore]
+    fn quiet_speech_is_understood() {
+        let model = std::path::Path::new("resources/models/ggml-small-q5_1.bin");
+        let ctx = whisper_rs::WhisperContext::new_with_params(model, whisper_rs::WhisperContextParameters::default()).unwrap();
+        for clip in ["t1", "t4"] {
+            let bytes = std::fs::read(format!("/tmp/voice/wav/{clip}.f32")).unwrap();
+            let quiet: Vec<f32> = bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) * 0.05).collect();
+            let boosted = super::louder(&quiet);
+            let raw = super::transcribe(&ctx, &boosted, "Discord, Steam, Spotify, League of Legends, Lens Studio. Hey mon gars.", false);
+            println!("{clip}: {raw:?}");
+            let retry = super::transcribe(&ctx, &boosted, "Hey Pyrosan.", true);
+            println!("{clip} retry: {retry:?}");
+        }
     }
 }

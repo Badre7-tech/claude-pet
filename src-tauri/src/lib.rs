@@ -400,7 +400,14 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
             Ok("all my notes are gone. fresh brain!".into())
         }
         Command::Reminders => Ok(state.reminders.lock().unwrap().describe(chrono::Local::now())),
-        Command::Micro => Ok(app.state::<voice_in::Ears>().describe()),
+        Command::Micro => {
+            let mut report = app.state::<voice_in::Ears>().describe();
+            let wav = state.data_dir.join(voice_in::LAST_SENTENCE);
+            if wav.is_file() {
+                report.push_str(&format!("\nta dernière phrase est enregistrée ici : {}", wav.display()));
+            }
+            Ok(report)
+        }
         Command::Cancel(which) => {
             let mut list = state.reminders.lock().unwrap();
             let reply = match which {
