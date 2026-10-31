@@ -4,7 +4,7 @@ mod settings;
 mod stats;
 mod tray;
 
-use chat::{History, RateLimiter};
+use chat::{History, Notes, RateLimiter};
 use settings::{Command, Settings};
 use stats::{now_ms, Outcome, Pet, Store};
 use std::{
@@ -27,6 +27,7 @@ pub struct AppState {
     data_dir: PathBuf,
     limiter: Mutex<RateLimiter>,
     history: Mutex<History>,
+    notes: Mutex<Notes>,
     thinking: AtomicBool,
 }
 
@@ -39,6 +40,15 @@ impl AppState {
 
     pub fn skin(&self) -> String {
         self.settings.lock().unwrap().skin.clone()
+    }
+
+    /// Changes the conversation history and saves it, so it survives a restart.
+    fn update_history(&self, f: impl FnOnce(&mut History)) {
+        let mut history = self.history.lock().unwrap();
+        f(&mut history);
+        if let Err(e) = history.save(&self.data_dir) {
+            eprintln!("failed to save history: {e}");
+        }
     }
 }
 
@@ -117,16 +127,19 @@ async fn ask_pet(app: &AppHandle, state: &AppState, message: Option<String>) -> 
     };
     let status = with_pet(app, |pet| pet.describe());
     let prompt = {
+        let notes = state.notes.lock().unwrap();
         let history = state.history.lock().unwrap();
         match &message {
-            Some(m) => chat::build_prompt(&name, &status, &history, m),
-            None => chat::build_nudge_prompt(&name, &status, &history),
+            Some(m) => chat::build_prompt(&name, &status, &notes, &history, m),
+            None => chat::build_nudge_prompt(&name, &status, &notes, &history),
         }
     };
     let reply = chat::ask_claude(&state.brain(), &model, &prompt).await?;
 
-    let said = message.unwrap_or_else(|| "(you cheered them on unprompted)".into());
-    state.history.lock().unwrap().push(said, reply.clone());
+    // Pep talks aren't part of the conversation, so they don't push real turns out of memory.
+    if let Some(said) = message {
+        state.update_history(|h| h.push(said, reply.clone()));
+    }
     Ok(reply)
 }
 
@@ -203,7 +216,7 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
             };
             if key == "skin" {
                 // A different body may come with a different personality; start fresh.
-                state.history.lock().unwrap().clear();
+                state.update_history(History::clear);
             }
             apply_settings(&app, &updated.1);
             Ok(updated.0)
@@ -226,15 +239,34 @@ async fn command(app: AppHandle, state: State<'_, AppState>, input: String) -> R
         Command::Doctor => chat::check_cli().await,
         Command::Stats => Ok(with_pet(&app, |pet| pet.describe())),
         Command::Clear => {
-            state.history.lock().unwrap().clear();
+            state.update_history(History::clear);
             Ok("conversation forgotten. who are you again? :)".into())
+        }
+        Command::Remember(note) => {
+            let mut notes = state.notes.lock().unwrap();
+            notes.add(&note)?;
+            notes.save(&state.data_dir).map_err(|e| format!("couldn't save that: {e}"))?;
+            Ok(format!("noted! i'll remember that ({}/{})", notes.list().len(), chat::MAX_NOTES))
+        }
+        Command::Memories => {
+            let notes = state.notes.lock().unwrap();
+            if notes.list().is_empty() {
+                return Ok("i'm not remembering anything yet. teach me with /remember <fact>".into());
+            }
+            Ok(notes.list().iter().enumerate().map(|(i, n)| format!("{}. {n}", i + 1)).collect::<Vec<_>>().join("\n"))
+        }
+        Command::Forget => {
+            let mut notes = state.notes.lock().unwrap();
+            notes.clear();
+            notes.save(&state.data_dir).map_err(|e| format!("couldn't forget: {e}"))?;
+            Ok("all my notes are gone. fresh brain!".into())
         }
         Command::Reset { confirmed: false } => {
             Err("this hatches a brand-new pet with fresh stats. type /reset confirm to do it".into())
         }
         Command::Reset { confirmed: true } => {
             with_pet(&app, |pet| *pet = Pet::new(now_ms()));
-            state.history.lock().unwrap().clear();
+            state.update_history(History::clear);
             Ok("*crack* …a fresh new pet! hello!".into())
         }
     }
@@ -301,7 +333,8 @@ pub fn run() {
                     hourly_limit,
                     Duration::from_secs(60 * 60),
                 )),
-                history: Mutex::new(History::default()),
+                history: Mutex::new(History::load(&data_dir)),
+                notes: Mutex::new(Notes::load(&data_dir)),
                 thinking: AtomicBool::new(false),
             });
 

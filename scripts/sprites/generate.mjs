@@ -142,7 +142,11 @@ function mouth(kind, y, cat) {
 }
 
 function face(p, skin) {
-  const out = faceParts(p, skin);
+  let out = faceParts(p, skin);
+  // Dark-bodied skins can recolour the face (eyes, mouth) so it stays visible.
+  if (skin.face.ink) out = out.replaceAll(INK, skin.face.ink);
+  // Optional details drawn over the face, e.g. slit pupils.
+  if (skin.overFace) out += skin.overFace(p);
   return skin.faceTransform ? `<g transform="${skin.faceTransform(p)}">${out}</g>` : out;
 }
 

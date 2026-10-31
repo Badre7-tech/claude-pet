@@ -72,6 +72,15 @@ function column(count, topY, wBottom, wTop, hBottom, hTop) {
   });
 }
 
+const STAR = (cx, cy, r) => {
+  const pts = Array.from({ length: 10 }, (_, i) => {
+    const ang = deg(-90 + i * 36);
+    const rr = i % 2 ? r * 0.45 : r;
+    return `${(cx + Math.cos(ang) * rr).toFixed(1)},${(cy + Math.sin(ang) * rr).toFixed(1)}`;
+  });
+  return `M${pts.join("L")}Z`;
+};
+
 export const SKINS = {
   blob: {
     label: "Blob",
@@ -135,6 +144,83 @@ export const SKINS = {
       return `
       <path d="M64 112c-24 0-38-15-38-36 0-19 12-31 24-43 7-7 ${11 + flick * 0.3}-15 ${9 + flick}-24 17 5 29 19 32 34 7 8 11 20 11 33 0 21-14 36-38 36z" fill="url(#ember-g)"/>
       <ellipse cx="64" cy="86" rx="26" ry="22" fill="url(#ember-core)" opacity="${glow.toFixed(2)}"/>`;
+    },
+  },
+
+  // Pyro: a majestic black-and-gold baby dragon — glowing gold eyes with slit pupils,
+  // curved golden horns, a ridge of scales, clawed wings and a smooth tail with a gold fin.
+  // Spits golden sparks while eating.
+  pyro: {
+    label: "Pyro",
+    fit: 0.8,
+    defs: `${gradient("pyro-g", "#4A4356", "#0D0B11")}
+      <linearGradient id="pyro-horn" x1="1" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#A97A22"/><stop offset=".6" stop-color="#E8BC4E"/><stop offset="1" stop-color="#FFF0B8"/></linearGradient>
+      <linearGradient id="pyro-wing" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#17141C"/><stop offset=".6" stop-color="#3A2F2A"/><stop offset="1" stop-color="#8A6A28"/></linearGradient>
+      <linearGradient id="pyro-belly" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE08A"/><stop offset="1" stop-color="#C9922E"/></linearGradient>
+      <radialGradient id="pyro-aura" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#FFD866" stop-opacity=".55"/><stop offset=".6" stop-color="#F5B83A" stop-opacity=".18"/><stop offset="1" stop-color="#F5B83A" stop-opacity="0"/></radialGradient>`,
+    face: { eyeY: 64, eyeDX: 14, mouthY: 84, cheek: "#B0566A", ink: "#F5C542" },
+    // Dragon eyes: a dark slit pupil on the glowing gold eye, plus a fresh glint.
+    overFace: (p) => {
+      if (p.eyes !== "open" && p.eyes !== "sad") return "";
+      const dy = p.eyes === "sad" ? 1.2 : 0.3;
+      return [50, 78]
+        .map((x) => `<ellipse cx="${x + 0.2}" cy="${64 + dy}" rx="1.3" ry="4.2" fill="#1A1206"/><circle cx="${x + 2}" cy="${64 + dy - 2.8}" r="1.2" fill="#fff"/>`)
+        .join("");
+    },
+    draw: (p) => {
+      const perk = (p.a + 1) / 2;
+      const flap = wave(p.t, 2) * 11 * (0.25 + perk);
+      const droop = (1 - p.a) * 12;
+      const wingAngle = (-flap + droop).toFixed(1);
+      const swish = (wave(p.t) * 7).toFixed(1);
+      const GOLD = "#E8BC4E";
+      const DEEP = "#9C7424";
+      const wingSvg = `
+        <path d="M92 62C96 44 104 30 112 20L117 12L116 21C121 25 125 30 127 37C122 38 120 42 122 48C117 47 114 51 115 57C111 56 107 59 106 64C102 63 98 67 97 73Z" fill="url(#pyro-wing)" stroke="${DEEP}" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M93 63L113 20M113 21L126 36M113 21L121 47M113 21L114 56" stroke="${GOLD}" stroke-width="1.8" stroke-linecap="round" opacity=".9"/>
+        <path d="M113 21L117 12L116 21z" fill="#FFE9A8"/>`;
+      const horn = `
+        <path d="M44 41Q33 27 30 9Q43 19 57 35Z" fill="url(#pyro-horn)" stroke="#8F6A1E" stroke-width="1.2" stroke-linejoin="round"/>
+        <path d="M38.1 32.2Q43.5 30.5 48.7 25.9M34.3 24.4Q38.3 23 41.9 19.2M32 17.8Q34.5 17 36.6 14.4" stroke="${DEEP}" stroke-width="1.2" stroke-linecap="round" fill="none" opacity=".65"/>
+        <path d="M41 37Q34 26 31.5 13" stroke="#FFF6D0" stroke-width="1.2" stroke-linecap="round" fill="none" opacity=".6"/>`;
+      let sparks = "";
+      if (p.fx?.crumbs !== undefined) {
+        const ph = p.fx.crumbs;
+        sparks = [[-1, 0.9], [1, 0.7], [0.2, 1.2], [-0.4, 1.4]]
+          .map(([dir, sp]) => `<path d="${STAR(64 + dir * (6 + ph * 24 * sp), 88 - ph * 18 * sp, 4.2 - ph * 1.8)}" fill="${dir > 0 ? "#FFD34D" : "#FFB13D"}" opacity="${(1 - ph * 0.6).toFixed(2)}"/>`)
+          .join("");
+      }
+      const brows = p.eyes === "sad" || p.eyes === "dead" ? "" : `<path d="M41 53q7 -5 14 -2M87 53q-7 -5 -14 -2" stroke="${GOLD}" stroke-width="2.2" stroke-linecap="round" fill="none" opacity=".9"/>`;
+      // Tiny arms resting on the belly, each with two golden claws.
+      const arm = (side) => `
+        <g transform="translate(${64 + side * 26} 90) rotate(${side * -28})">
+          <ellipse cx="0" cy="0" rx="5.5" ry="9" fill="#1F1A25" stroke="#B8902F" stroke-width="1" stroke-opacity=".6"/>
+          <path d="M-2.4 8.2q1 2.8 2 0zM0.6 8.4q1 2.8 2 0z" fill="#F2C54E"/>
+        </g>`;
+      // A soft golden aura when it's really happy.
+      const aura = p.a >= 0.8 ? `<circle cx="64" cy="70" r="58" fill="url(#pyro-aura)"/>` : "";
+      return `
+      ${aura}
+      <g transform="rotate(${swish} 88 100)">
+        <path d="M84 98C102 110 121 102 122 82C122 76 119 71 116 68C118 80 114 92 102 96C96 98 90 97 84 94Z" fill="url(#pyro-g)" stroke="#B8902F" stroke-width="1" stroke-opacity=".6"/>
+        <path d="M88 101C103 108 118 100 119.5 84" stroke="${GOLD}" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".75"/>
+        <path d="M116.5 69C113 64 114 58 119 54C120 59 121 64 119.5 70Z" fill="${GOLD}" stroke="#8F6A1E" stroke-width="1" stroke-linejoin="round"/>
+      </g>
+      <g transform="rotate(${wingAngle} 92 62)">${wingSvg}</g>
+      <g transform="translate(128 0) scale(-1 1)"><g transform="rotate(${wingAngle} 92 62)">${wingSvg}</g></g>
+      ${horn}
+      <g transform="translate(128 0) scale(-1 1)">${horn}</g>
+      <path d="M58 33L60.5 26L63 31.5L64 22L65 31.5L67.5 26L70 33Z" fill="${GOLD}" stroke="#8F6A1E" stroke-width="1" stroke-linejoin="round"/>
+      <ellipse cx="46" cy="108" rx="10" ry="6" fill="#16131B" stroke="#B8902F" stroke-width="1" stroke-opacity=".55"/>
+      <ellipse cx="82" cy="108" rx="10" ry="6" fill="#16131B" stroke="#B8902F" stroke-width="1" stroke-opacity=".55"/>
+      <path d="M64 30c25 0 42 20 42 45 0 24-18 37-42 37S22 99 22 75c0-25 17-45 42-45z" fill="url(#pyro-g)" stroke="#B8902F" stroke-width="1.3" stroke-opacity=".55"/>
+      <path d="M30 86q4-3.5 8 0M33 95q4-3.5 8 0M90 86q4-3.5 8 0M87 95q4-3.5 8 0M36 76q4-3.5 8 0M84 76q4-3.5 8 0" stroke="${GOLD}" stroke-width="1.3" stroke-linecap="round" fill="none" opacity=".22"/>
+      <path d="M45 93c4 11 11 18 19 18s15-7 19-18c-6 4-12 5-19 5s-13-1-19-5z" fill="url(#pyro-belly)"/>
+      <path d="M48 100h32M51 105h26M55 109h18" stroke="#8F6A1E" stroke-width="1.3" stroke-linecap="round" opacity=".55"/>
+      ${arm(-1)}${arm(1)}
+      ${brows}
+      <path d="M34 60c3-12 11-21 22-25" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none" opacity=".16"/>
+      ${sparks}`;
     },
   },
 

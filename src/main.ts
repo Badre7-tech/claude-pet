@@ -12,6 +12,7 @@ import {
   runCommand,
   type Pet,
   type Reaction,
+  type Settings,
 } from "./api";
 import { listen } from "@tauri-apps/api/event";
 import { Menu } from "@tauri-apps/api/menu";
@@ -25,9 +26,10 @@ let bubbleTimer: number | undefined;
 
 /**
  * Shows a speech bubble for long enough to read it (about 15 characters a second).
- * It stays up while hovered, so long replies can be scrolled. `ms = 0` keeps it up.
+ * It stays up while hovered or being read aloud, so long replies can be scrolled.
+ * `ms = 0` keeps it up.
  */
-function say(text: string, ms = Math.min(30000, 3000 + text.length * 65)) {
+function say(text: string, ms = Math.min(60000, 3000 + text.length * 65)) {
   bubbleEl.classList.remove("thinking");
   bubbleText.textContent = text;
   bubbleText.scrollTop = 0;
@@ -37,17 +39,86 @@ function say(text: string, ms = Math.min(30000, 3000 + text.length * 65)) {
 }
 
 function hideBubble() {
-  if (bubbleEl.matches(":hover")) {
+  if (bubbleEl.matches(":hover") || speaking()) {
     bubbleTimer = window.setTimeout(hideBubble, 1500);
     return;
   }
   bubbleEl.classList.remove("show");
 }
 
-/** The pet "speaks" a line Claude wrote. */
-function speak(text: string) {
-  pet.play("talk", Math.min(3000, 400 + text.length * 25));
+// ---------- voice: replies read aloud with the system's text-to-speech (Windows voices) ----------
+
+const tts = "speechSynthesis" in window ? window.speechSynthesis : undefined;
+let voiceOn = true;
+let frenchVoice: SpeechSynthesisVoice | undefined;
+
+/** Prefers a French voice, and the natural-sounding ones when Windows has them. */
+function pickVoice() {
+  const voices = tts?.getVoices() ?? [];
+  const fr = voices.filter((v) => v.lang.toLowerCase().startsWith("fr"));
+  frenchVoice =
+    fr.find((v) => /natural|neural|online/i.test(v.name) && /fr-fr/i.test(v.lang)) ??
+    fr.find((v) => /fr-fr/i.test(v.lang)) ??
+    fr[0];
+}
+if (tts) {
+  pickVoice();
+  tts.addEventListener("voiceschanged", pickVoice);
+}
+
+const speaking = () => tts?.speaking ?? false;
+/** The line being read right now, so a cancelled one can't touch the bubble later. */
+let current: SpeechSynthesisUtterance | undefined;
+
+function stopVoice() {
+  current = undefined;
+  tts?.cancel();
+}
+
+/** What's worth saying out loud: no links, *sound effects*, emoji or markdown symbols. */
+function forSpeech(text: string) {
+  return text
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\*[^*\n]{1,30}\*/g, "")
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/[#*_`>|~]/g, "")
+    .replace(/^\s*-\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function readAloud(text: string) {
+  if (!tts || !voiceOn) return;
+  stopVoice();
+  const line = forSpeech(text);
+  if (!line) return;
+  const utterance = new SpeechSynthesisUtterance(line);
+  utterance.lang = frenchVoice?.lang ?? "fr-FR";
+  if (frenchVoice) utterance.voice = frenchVoice;
+  utterance.rate = 1.05;
+  // Once it's done talking, the bubble can go away a few seconds later.
+  utterance.onend = () => {
+    if (utterance !== current) return;
+    current = undefined;
+    clearTimeout(bubbleTimer);
+    bubbleTimer = window.setTimeout(hideBubble, 4000);
+  };
+  current = utterance;
+  tts.speak(utterance);
+}
+
+/** The pet "speaks" a line Claude wrote, out loud too when `aloud` and the voice is on. */
+function speak(text: string, aloud = false) {
+  const voiced = aloud && voiceOn && !!tts;
+  pet.play("talk", voiced ? Math.min(20000, 400 + text.length * 55) : Math.min(3000, 400 + text.length * 25));
   say(text);
+  if (voiced) readAloud(text);
+}
+
+function applySettings(s: Settings) {
+  pet.setSkin(s.skin);
+  voiceOn = s.voice;
+  if (!voiceOn) stopVoice();
 }
 
 function moodOf(p: Pet): Mood {
@@ -59,7 +130,11 @@ function moodOf(p: Pet): Mood {
   return "neutral";
 }
 
-const pet = new PetView(document.getElementById("pet")!, () => pet.play("wiggle"));
+// Clicking the pet makes it wiggle, and hushes it if it was talking.
+const pet = new PetView(document.getElementById("pet")!, () => {
+  stopVoice();
+  pet.play("wiggle");
+});
 const panel = new Panel(
   document.getElementById("panel")!,
   (action) => void act(action),
@@ -70,11 +145,12 @@ async function talk(msg: string) {
   if (/^\/(bye|quit|exit)\s*$/i.test(msg)) return farewell();
   if (msg.startsWith("/")) return command(msg);
   panel.setThinking(true);
+  stopVoice();
   bubbleText.textContent = "";
   bubbleEl.classList.add("show", "thinking");
   clearTimeout(bubbleTimer);
   try {
-    speak(await chat(msg));
+    speak(await chat(msg), true);
   } catch (err) {
     pet.play("wiggle");
     say(String(err));
@@ -88,7 +164,7 @@ async function command(input: string) {
   const pep = /^\/(motivate|pep)\b/i.test(input);
   try {
     const out = await runCommand(input);
-    if (pep) speak(out);
+    if (pep) speak(out, true);
     else say(out, 10000);
   } catch (err) {
     say(String(err), 6000);
@@ -101,6 +177,7 @@ let leaving = false;
 async function farewell() {
   if (leaving) return;
   leaving = true;
+  stopVoice();
   document.body.classList.add("leaving");
   say("bye bye! see you soon", 0);
   await pet.playFinal("bye");
@@ -151,15 +228,15 @@ function react(r: Reaction) {
 
 void onStats(render);
 void onReaction(react);
-void onSettings((s) => pet.setSkin(s.skin));
+void onSettings(applySettings);
 void onNudge(speak);
 void listen("farewell", () => void farewell()); // Quit from the tray
 void Promise.all([getPet(), getSettings()]).then(([p, s]) => {
-  pet.setSkin(s.skin);
+  applySettings(s);
   render(p);
   // First-run help for colleagues who don't have Claude Code yet.
   runCommand("/doctor").catch((err) => say(String(err), 0));
   if (p.asleep) say("zzz…");
   else if (s.skin === "spine") say("oh good, it's you. spiny's here, try to contain yourself. /help if you must");
-  else say(`hi! i'm ${s.name.toLowerCase()}. type /help for commands`);
+  else say(`coucou, c'est ${s.name} ! pose-moi une question, ou tape /help pour les commandes`);
 });

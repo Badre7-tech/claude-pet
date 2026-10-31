@@ -20,26 +20,30 @@ pub struct Settings {
     pub skin: String,
     /// Minutes between unprompted pep talks; 0 turns them off.
     pub motivate: u32,
+    /// Read replies aloud with the system's text-to-speech voice.
+    pub voice: bool,
 }
 
 /// Must match the sheets in public/sprites (see scripts/sprites/skins.mjs).
-pub const SKINS: [&str; 5] = ["blob", "sprout", "beancat", "ember", "spine"];
+pub const SKINS: [&str; 6] = ["blob", "sprout", "beancat", "ember", "pyro", "spine"];
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             name: "Mochi".into(),
-            model: std::env::var("CLAUDE_PET_MODEL").unwrap_or_else(|_| "haiku".into()),
+            // Sonnet: the pet now searches the web and gives real answers, not just one-liners.
+            model: std::env::var("CLAUDE_PET_MODEL").unwrap_or_else(|_| "sonnet".into()),
             speed: 1.0,
             on_top: true,
             hourly_limit: 30,
             skin: "blob".into(),
             motivate: 45,
+            voice: true,
         }
     }
 }
 
-pub const KEYS: &str = "name, skin, model, speed, ontop, limit, motivate";
+pub const KEYS: &str = "name, skin, model, voice, speed, ontop, limit, motivate";
 
 impl Settings {
     pub fn load(dir: &Path) -> Self {
@@ -74,12 +78,13 @@ impl Settings {
 
     pub fn describe(&self) -> String {
         format!(
-            "name: {} · skin: {} · model: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
+            "name: {} · skin: {} · model: {} · voice: {} · speed: {}x · ontop: {} · limit: {}/hour · motivate: {}",
             self.display_name(),
             self.skin,
             self.effective_model(),
+            on_off(self.voice),
             self.speed,
-            if self.on_top { "on" } else { "off" },
+            on_off(self.on_top),
             self.hourly_limit,
             if self.motivate == 0 { "off".to_string() } else { format!("every {} min", self.motivate) }
         )
@@ -118,12 +123,12 @@ impl Settings {
                 Ok(if speed == 0.0 { "time is frozen. stats won't change".into() } else { format!("stats now change at {speed}x speed") })
             }
             "ontop" => {
-                self.on_top = match value {
-                    "on" | "true" | "yes" => true,
-                    "off" | "false" | "no" => false,
-                    _ => return Err("ontop is on or off".into()),
-                };
-                Ok(format!("always on top: {value}"))
+                self.on_top = parse_on_off(value).ok_or("ontop is on or off")?;
+                Ok(format!("always on top: {}", on_off(self.on_top)))
+            }
+            "voice" => {
+                self.voice = parse_on_off(value).ok_or("voice is on or off")?;
+                Ok(if self.voice { "voice on: i'll read my answers out loud".into() } else { "voice off: i'll stay quiet".into() })
             }
             "limit" => {
                 let limit: usize = value.parse().map_err(|_| "limit is a whole number")?;
@@ -165,6 +170,18 @@ fn path(dir: &Path) -> PathBuf {
     dir.join("settings.json")
 }
 
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+fn parse_on_off(value: &str) -> Option<bool> {
+    match value.to_lowercase().as_str() {
+        "on" | "true" | "yes" | "oui" => Some(true),
+        "off" | "false" | "no" | "non" => Some(false),
+        _ => None,
+    }
+}
+
 /// Everything you can type in the chat box that starts with `/`.
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -177,9 +194,12 @@ pub enum Command {
     Stats,
     Clear,
     Reset { confirmed: bool },
+    Remember(String),
+    Memories,
+    Forget,
 }
 
-pub const HELP: &str = "/settings · /settings <key> <value> · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye";
+pub const HELP: &str = "/settings · /settings <key> <value> · /remember <fact> · /memories · /forget · /motivate · /stats · /doctor · /personality [reset] · /clear · /reset · /bye";
 
 pub fn parse(input: &str) -> Result<Command, String> {
     let input = input.trim().trim_start_matches('/');
@@ -198,6 +218,10 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "stats" => Ok(Command::Stats),
         "clear" => Ok(Command::Clear),
         "reset" => Ok(Command::Reset { confirmed: rest == "confirm" }),
+        "remember" | "retiens" if rest.is_empty() => Err("usage: /remember <something to remember>".into()),
+        "remember" | "retiens" => Ok(Command::Remember(rest.into())),
+        "memories" | "memoire" | "mémoire" => Ok(Command::Memories),
+        "forget" | "oublie" => Ok(Command::Forget),
         other => Err(format!("unknown command /{other}. try /help")),
     }
 }
@@ -215,6 +239,11 @@ mod tests {
         assert_eq!(parse("/personality reset"), Ok(Command::Personality { reset: true }));
         assert_eq!(parse("/motivate"), Ok(Command::Motivate));
         assert_eq!(parse("/reset confirm"), Ok(Command::Reset { confirmed: true }));
+        assert_eq!(parse("/remember  my cat is Tofu "), Ok(Command::Remember("my cat is Tofu".into())));
+        assert_eq!(parse("/retiens j'aime LoL"), Ok(Command::Remember("j'aime LoL".into())));
+        assert!(parse("/remember").is_err());
+        assert_eq!(parse("/memories"), Ok(Command::Memories));
+        assert_eq!(parse("/forget"), Ok(Command::Forget));
         assert!(parse("/settings name").is_err());
         assert!(parse("/dance").is_err());
     }
@@ -233,6 +262,14 @@ mod tests {
         assert!(s.set("speed", "fast").is_err());
         assert!(s.set("ontop", "off").is_ok());
         assert!(!s.on_top);
+        assert!(s.voice, "voice is on by default");
+        assert!(s.set("voice", "off").is_ok());
+        assert!(!s.voice);
+        assert!(s.set("voice", "Oui").is_ok());
+        assert!(s.voice);
+        assert!(s.set("voice", "loud").is_err());
+        assert!(s.set("skin", "pyro").is_ok());
+        assert_eq!(s.display_name(), "Pip", "pyro uses the usual name and personality");
         assert!(s.set("limit", "0").is_err());
         assert!(s.set("skin", "ember").is_ok());
         assert!(s.set("skin", "spine").is_ok());
@@ -258,6 +295,7 @@ mod tests {
         fs::write(dir.join("settings.json"), r#"{"name":"Old"}"#).unwrap();
         let old = Settings::load(&dir);
         assert_eq!((old.name.as_str(), old.speed), ("Old", 1.0));
+        assert!(old.voice, "settings from before voice existed get it switched on");
         fs::write(dir.join("settings.json"), r#"{"name":"Old","skin":"spark"}"#).unwrap();
         assert_eq!(Settings::load(&dir).skin, "blob", "a removed skin falls back to the default");
         fs::remove_dir_all(dir).unwrap();

@@ -26,6 +26,7 @@ export type Settings = {
   hourly_limit: number;
   skin: string;
   motivate: number;
+  voice: boolean;
 };
 
 export const getPet = () => invoke<Pet>("get_pet");

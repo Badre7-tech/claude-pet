@@ -8,9 +8,9 @@
   --warn: #e0a43a;
   --bad: #d65745;
   --pet-size: 128px;
-  --panel-h: 146px;
+  --panel-h: 150px;
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ink);
 }
 
@@ -60,12 +60,12 @@ body {
   left: 12px;
   right: 12px;
   bottom: var(--bottom);
-  padding: 8px 11px;
+  padding: 10px 13px;
   background: var(--paper);
   border: 1px solid var(--paper-edge);
   border-radius: 14px;
   box-shadow: 0 2px 8px rgba(43, 27, 23, 0.12);
-  line-height: 1.35;
+  line-height: 1.4;
   user-select: text;
   opacity: 0;
   translate: 0 6px;
@@ -150,6 +150,9 @@ body {
   display: block;
   max-height: calc(100vh - var(--bottom) - 30px);
   overflow-y: auto;
+  /* Answers can have line breaks and "- " lists. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }

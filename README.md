@@ -15,6 +15,18 @@ window, cheers you on while you work, and chats through your local Claude Code C
   *Edit personality…* and quit. The tooltip shows current stats.
 - Every 45 minutes (configurable) Mochi pipes up with a short pep talk.
 
+### In this fork (v0.2)
+
+- **Web search**: the pet can search the web and read pages (Claude Code's `WebSearch` and
+  `WebFetch` tools, nothing else: no shell, no files, no MCP servers).
+- **Real answers** with Sonnet by default, up to 2000-character questions, and a bigger,
+  scrollable bubble that keeps line breaks.
+- **Memory**: the conversation (last 12 exchanges) survives restarts until `/clear`, and
+  `/remember <fact>` keeps up to 20 notes sent with every message (`/memories`, `/forget`).
+- **Voice**: replies are read aloud with a French Windows voice (`/settings voice off` to
+  mute, click the pet to hush it).
+- **Pyro**: a black-and-gold dragon skin (`/settings skin pyro`).
+
 ## Moods
 
 Food, mood and energy drain over time (even while the app is closed), and the pet shows it.

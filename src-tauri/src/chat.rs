@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     fs,
@@ -8,9 +9,21 @@ use std::{
 
 /// Seeded into the brain folder on first run; the user's edited copy wins after that.
 const DEFAULT_PERSONALITY: &str = include_str!("../personality/CLAUDE.md");
-const MAX_MESSAGE_CHARS: usize = 500;
-const HISTORY_TURNS: usize = 6;
-const CLI_TIMEOUT: Duration = Duration::from_secs(90);
+const MAX_MESSAGE_CHARS: usize = 2000;
+const HISTORY_TURNS: usize = 12;
+/// Older turns are kept shorter so the prompt (passed on the command line, which Windows
+/// caps at 32k characters) stays small however long the conversation gets.
+const HISTORY_HUMAN_CHARS: usize = 400;
+const HISTORY_PET_CHARS: usize = 900;
+/// Web searches take a while, so give the brain time to look things up.
+const CLI_TIMEOUT: Duration = Duration::from_secs(180);
+/// Long-term notes the human asked the pet to remember (`/remember …`).
+pub const MAX_NOTES: usize = 20;
+const NOTE_CHARS: usize = 200;
+/// The only tools the pet gets: it can look things up, never touch the computer.
+const TOOLS: &str = "WebSearch,WebFetch";
+/// Stops a runaway search loop; plenty for a few searches and page reads.
+const MAX_TURNS: &str = "12";
 
 /// Allows at most `max_calls` per sliding `window`, with at least `min_gap` between calls.
 pub struct RateLimiter {
@@ -53,15 +66,40 @@ impl RateLimiter {
     }
 }
 
-/// Rolling memory of the last few exchanges so the pet can follow a conversation.
-#[derive(Default)]
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// Reads JSON from `path`, or the default when it's missing or unreadable.
+fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
+    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// Writes to a temp file first so a crash mid-write can't corrupt the file.
+fn save_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
+    fs::rename(tmp, path)
+}
+
+/// Rolling memory of the last exchanges so the pet can follow a conversation.
+/// Saved next to the pet, so it survives restarts until `/clear`.
+#[derive(Default, Serialize, Deserialize)]
 pub struct History {
     turns: VecDeque<(String, String)>,
 }
 
 impl History {
     pub fn push(&mut self, human: String, pet: String) {
-        self.turns.push_back((human, pet));
+        self.turns.push_back((shorten(&human, HISTORY_HUMAN_CHARS), shorten(&pet, HISTORY_PET_CHARS)));
         while self.turns.len() > HISTORY_TURNS {
             self.turns.pop_front();
         }
@@ -69,6 +107,62 @@ impl History {
 
     pub fn clear(&mut self) {
         self.turns.clear();
+    }
+
+    pub fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join("history.json")
+    }
+
+    pub fn load(data_dir: &Path) -> Self {
+        let mut history: Self = load_json(&Self::path(data_dir));
+        while history.turns.len() > HISTORY_TURNS {
+            history.turns.pop_front();
+        }
+        history
+    }
+
+    pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        save_json(&Self::path(data_dir), self)
+    }
+}
+
+/// Things the human explicitly asked the pet to remember, sent with every message.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Notes {
+    items: Vec<String>,
+}
+
+impl Notes {
+    fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join("notes.json")
+    }
+
+    pub fn load(data_dir: &Path) -> Self {
+        load_json(&Self::path(data_dir))
+    }
+
+    pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        save_json(&Self::path(data_dir), self)
+    }
+
+    pub fn add(&mut self, note: &str) -> Result<(), String> {
+        let note = note.trim();
+        if note.is_empty() {
+            return Err("usage: /remember <something to remember>".into());
+        }
+        if self.items.len() >= MAX_NOTES {
+            return Err(format!("my memory is full ({MAX_NOTES} notes). /forget to start over"));
+        }
+        self.items.push(shorten(note, NOTE_CHARS));
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
+
+    pub fn list(&self) -> &[String] {
+        &self.items
     }
 }
 
@@ -146,10 +240,11 @@ pub fn reset_personality(brain: &Path, skin: &str) -> std::io::Result<()> {
 }
 
 /// Prompt for an unprompted pep talk.
-pub fn build_nudge_prompt(name: &str, status: &str, history: &History) -> String {
+pub fn build_nudge_prompt(name: &str, status: &str, notes: &Notes, history: &History) -> String {
     build_prompt(
         name,
         status,
+        notes,
         history,
         "(nobody said anything: the human is busy working at their computer. Give them a short, \
          specific nudge of motivation to keep going, or if it's been a while, a gentle reminder to \
@@ -180,8 +275,14 @@ pub fn clean_message(raw: &str) -> Result<String, String> {
     Ok(msg.chars().take(MAX_MESSAGE_CHARS).collect())
 }
 
-pub fn build_prompt(name: &str, status: &str, history: &History, message: &str) -> String {
+pub fn build_prompt(name: &str, status: &str, notes: &Notes, history: &History, message: &str) -> String {
     let mut prompt = format!("[your name] {name}\n[your current state] {status}\n");
+    if !notes.items.is_empty() {
+        prompt.push_str("[things the human asked you to remember]\n");
+        for note in &notes.items {
+            prompt.push_str(&format!("- {note}\n"));
+        }
+    }
     if !history.turns.is_empty() {
         prompt.push_str("[recent conversation]\n");
         for (human, pet) in &history.turns {
@@ -235,14 +336,18 @@ pub async fn check_cli() -> Result<String, String> {
     }
 }
 
-/// Runs `claude -p <prompt>` in the brain folder with every tool disabled,
-/// so the pet can only talk.
+/// Runs `claude -p <prompt>` in the brain folder. The only tools are web search and
+/// reading web pages: no shell, no files, no MCP servers, and anything else is refused
+/// without asking (`dontAsk`), so the pet can look things up but never act on the computer.
 pub async fn ask_claude(brain: &Path, model: &str, prompt: &str) -> Result<String, String> {
     let mut cmd = cli_command();
     cmd.arg("-p")
         .arg(prompt)
         .args(["--model", model])
-        .args(["--tools", ""])
+        .args(["--tools", TOOLS])
+        .args(["--allowedTools", TOOLS])
+        .args(["--permission-mode", "dontAsk"])
+        .args(["--max-turns", MAX_TURNS])
         .arg("--strict-mcp-config")
         .arg("--no-session-persistence")
         // Skip the user's global settings (hooks, plugins) so they can't leak into replies.
@@ -307,28 +412,66 @@ mod tests {
     #[test]
     fn history_keeps_only_recent_turns() {
         let mut h = History::default();
-        for i in 0..10 {
+        for i in 0..20 {
             h.push(format!("q{i}"), format!("a{i}"));
         }
         assert_eq!(h.turns.len(), HISTORY_TURNS);
-        assert_eq!(h.turns[0].0, "q4");
+        assert_eq!(h.turns[0].0, format!("q{}", 20 - HISTORY_TURNS));
+    }
+
+    #[test]
+    fn long_turns_are_shortened_in_history() {
+        let mut h = History::default();
+        h.push("é".repeat(5000), "x".repeat(5000));
+        assert_eq!(h.turns[0].0.chars().count(), HISTORY_HUMAN_CHARS + 1);
+        assert_eq!(h.turns[0].1.chars().count(), HISTORY_PET_CHARS + 1);
+        assert!(h.turns[0].1.ends_with('…'));
+    }
+
+    #[test]
+    fn history_and_notes_survive_restarts() {
+        let dir = std::env::temp_dir().join(format!("claude-pet-history-{}", crate::stats::now_ms()));
+        let mut h = History::default();
+        h.push("salut".into(), "coucou !".into());
+        h.save(&dir).unwrap();
+        assert_eq!(History::load(&dir).turns, h.turns);
+
+        let mut n = Notes::default();
+        assert!(n.add("  ").is_err());
+        n.add("j'adore League of Legends").unwrap();
+        n.save(&dir).unwrap();
+        assert_eq!(Notes::load(&dir).list(), ["j'adore League of Legends"]);
+        for i in 1..MAX_NOTES {
+            n.add(&format!("note {i}")).unwrap();
+        }
+        assert!(n.add("one too many").is_err());
+
+        fs::write(dir.join("history.json"), "not json").unwrap();
+        assert!(History::load(&dir).turns.is_empty(), "a corrupt file starts fresh");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn prompt_includes_state_history_and_message() {
         let mut h = History::default();
         h.push("hi".into(), "hello!".into());
-        let p = build_prompt("Pip", "food 50/100", &h, "how are you?");
+        let p = build_prompt("Pip", "food 50/100", &Notes::default(), &h, "how are you?");
         assert!(p.starts_with("[your name] Pip\n[your current state] food 50/100"));
+        assert!(!p.contains("[things the human asked you to remember]"));
         assert!(p.contains("human: hi\nyou: hello!"));
         assert!(p.contains("[human says]\nhow are you?"));
+
+        let mut n = Notes::default();
+        n.add("my cat is called Tofu").unwrap();
+        let p = build_prompt("Pip", "food 50/100", &n, &h, "what's my cat's name?");
+        assert!(p.contains("[things the human asked you to remember]\n- my cat is called Tofu\n"));
     }
 
     #[test]
     fn messages_are_trimmed_and_capped() {
         assert!(clean_message("   ").is_err());
         assert_eq!(clean_message("  hey ").unwrap(), "hey");
-        assert_eq!(clean_message(&"x".repeat(2000)).unwrap().len(), MAX_MESSAGE_CHARS);
+        assert_eq!(clean_message(&"x".repeat(5000)).unwrap().len(), MAX_MESSAGE_CHARS);
     }
 
     #[test]
@@ -390,7 +533,13 @@ mod tests {
     fn real_claude_replies_in_character() {
         let dir = std::env::temp_dir().join(format!("claude-pet-live-{}", crate::stats::now_ms()));
         let brain = brain_dir(&dir, "blob").unwrap();
-        let prompt = build_prompt("Mochi", "food 20/100 (low = starving), mood 60/100, energy 70/100, awake", &History::default(), "hi! what's your name?");
+        let prompt = build_prompt(
+            "Mochi",
+            "food 20/100 (low = starving), mood 60/100, energy 70/100, awake",
+            &Notes::default(),
+            &History::default(),
+            "hi! what's your name?",
+        );
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let reply = rt.block_on(ask_claude(&brain, "haiku", &prompt)).unwrap();
         println!("mochi: {reply}");
