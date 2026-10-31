@@ -42,7 +42,7 @@ export class Panel {
       <ul class="suggest" role="listbox" aria-label="Command suggestions" hidden></ul>
       <form class="chat" autocomplete="off">
         <input name="msg" maxlength="2000" placeholder="pose-moi une question… ou /help" aria-label="Message to your pet" />
-        <button type="button" class="mic" aria-label="Parler" title="Parler (Ctrl+Espace)">🎙</button>
+        <button type="button" class="mic" aria-label="Parler" title="Parler (F9)">🎙</button>
         <button type="submit" aria-label="Send">↑</button>
       </form>`;
 

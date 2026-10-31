@@ -419,7 +419,7 @@ void onHeard((text) => {
   void talk(text, true);
 });
 
-// Without the speech model, Ctrl+Space falls back to Windows voice typing in the chat box.
+// Without the speech model, F9 falls back to Windows voice typing in the chat box.
 void onDictate(() => {
   stopVoice();
   panel.focusInput();

@@ -440,7 +440,7 @@ async fn tts(app: AppHandle, state: State<'_, AppState>, text: String) -> Result
         .map(tauri::ipc::Response::new)
 }
 
-/// Ctrl+Space: brings the pet up with the chat box ready, then the window starts dictation.
+/// F9: the pet listens for the next sentence (or, without the speech model, starts Windows dictation).
 fn summon(app: &AppHandle) {
     let window = app.get_webview_window("main");
     if let Some(window) = &window {
@@ -459,7 +459,7 @@ fn summon(app: &AppHandle) {
     }
 }
 
-/// The 🎙 button: same as Ctrl+Space.
+/// The 🎙 button: same as F9.
 #[tauri::command]
 fn listen_now(app: AppHandle) {
     summon(&app);
@@ -612,13 +612,13 @@ pub fn run() {
             }
             {
                 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-                let registered = app.global_shortcut().on_shortcut("ctrl+space", |app, _, event| {
+                let registered = app.global_shortcut().on_shortcut("F9", |app, _, event| {
                     if event.state == ShortcutState::Pressed {
                         summon(app);
                     }
                 });
                 if let Err(e) = registered {
-                    eprintln!("couldn't register Ctrl+Space: {e}");
+                    eprintln!("couldn't register F9: {e}");
                 }
             }
             let reminders_app = app.handle().clone();

@@ -38,7 +38,7 @@ window, cheers you on while you work, and chats through your local Claude Code C
 - **ElevenLabs voice** (v0.4): `/settings elevenkey <key>`; every clip is cached on disk so a
   sentence is only paid for once, long answers are only read up to ~600 characters, and any
   problem falls back to the Windows voice. The mouth moves for as long as the voice speaks.
-- **Hands-free** (v0.5): say "Hey Pyrosan, …" (the pet's name) and it answers; Ctrl+Space or the
+- **Hands-free** (v0.5): say "Hey Pyrosan, …" (the pet's name) and it answers; F9 or the
   🎙 button listen without the name. Speech is turned into text by whisper.cpp **on this
   computer** (the small model is bundled in the installer); the microphone is ignored while the
   pet talks. `/settings listen off` stops the always-on listening.

@@ -217,7 +217,7 @@ impl Settings {
                 Ok(if self.listen {
                     format!("j'écoute ! dis « Hey {} » quand tu as besoin de moi", self.display_name())
                 } else {
-                    "je n'écoute plus (Ctrl+Espace marche toujours)".into()
+                    "je n'écoute plus (F9 marche toujours)".into()
                 })
             }
             "wake" => {
