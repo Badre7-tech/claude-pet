@@ -218,8 +218,13 @@ fn tell(app: &AppHandle, state: &'static str, text: impl Into<String>) {
 pub struct Ears {
     wake: AtomicBool,
     speaking: AtomicBool,
+    /// When the pet started talking, so a lost "stopped talking" can't mute the mic forever.
+    speaking_since: Mutex<Option<Instant>>,
     armed_until: Mutex<Option<Instant>>,
-    name: Mutex<String>,
+    /// What wakes the pet up: its name, or the words chosen with /settings wake.
+    name: Mutex<Vec<String>>,
+    /// App names from the Start menu, to help the speech model spell "lance League of Legends".
+    vocabulary: Mutex<String>,
     /// What /micro reports: which mic, how loud, what was last understood, what went wrong.
     report: Mutex<Report>,
 }
@@ -253,8 +258,8 @@ impl Ears {
         };
         let heard = if r.heard.is_empty() { "rien".to_string() } else { r.heard.iter().map(|h| format!("« {h} »")).collect::<Vec<_>>().join(" · ") };
         let mut out = format!(
-            "écoute « Hey {} » : {}\nmodèle vocal : {model}\nmicro : {mic}\nvolume max récent : {level}\nderniers mots entendus : {heard}",
-            self.name.lock().unwrap(),
+            "écoute « {} » : {}\nmodèle vocal : {model}\nmicro : {mic}\nvolume max récent : {level}\nderniers mots entendus : {heard}",
+            self.name.lock().unwrap().join(" » ou « "),
             if wake { "oui" } else { "non" }
         );
         if !r.problem.is_empty() {
@@ -273,12 +278,14 @@ impl Ears {
 }
 
 impl Ears {
-    pub fn new(wake: bool, name: String) -> Self {
+    pub fn new(wake: bool, words: Vec<String>) -> Self {
         Self {
             wake: AtomicBool::new(wake),
             speaking: AtomicBool::new(false),
+            speaking_since: Mutex::new(None),
             armed_until: Mutex::new(None),
-            name: Mutex::new(name),
+            name: Mutex::new(words),
+            vocabulary: Mutex::new(String::new()),
             report: Mutex::new(Report::default()),
         }
     }
@@ -287,13 +294,22 @@ impl Ears {
         self.wake.store(on, Ordering::SeqCst);
     }
 
-    pub fn set_name(&self, name: String) {
-        *self.name.lock().unwrap() = name;
+    pub fn set_words(&self, words: Vec<String>) {
+        *self.name.lock().unwrap() = words;
     }
 
     /// While the pet talks, the microphone would hear it: ignore it then.
     pub fn set_speaking(&self, on: bool) {
         self.speaking.store(on, Ordering::SeqCst);
+        *self.speaking_since.lock().unwrap() = on.then(Instant::now);
+    }
+
+    fn is_speaking(&self) -> bool {
+        // No answer is read for more than two minutes: past that, "stopped" was lost.
+        if self.speaking_since.lock().unwrap().is_some_and(|t| t.elapsed() > Duration::from_secs(120)) {
+            self.set_speaking(false);
+        }
+        self.speaking.load(Ordering::SeqCst)
     }
 
     /// The next thing said is a request (no "hey Pyrosan" needed).
@@ -319,16 +335,23 @@ pub fn model_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().resolve(MODEL_FILE, tauri::path::BaseDirectory::Resource).ok().filter(|p| p.is_file())
 }
 
+/// Half the cores, up to 8: fast enough to answer quickly, light enough for a game running.
 fn threads() -> i32 {
     let cores = thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-    (cores / 2).clamp(1, 4) as i32
+    (cores / 2).clamp(1, 8) as i32
 }
 
-fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], name: &str) -> String {
+/// The first wake word that starts `text`, and what comes after it.
+fn after_any(text: &str, words: &[String]) -> Option<String> {
+    words.iter().find_map(|w| after_wake_word(text, w))
+}
+
+fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], name: &str, vocabulary: &str) -> String {
     use whisper_rs::{FullParams, SamplingStrategy};
     let Ok(mut state) = ctx.create_state() else { return String::new() };
-    // Naming the pet up front helps the model spell it right.
-    let prompt = format!("Hey {name}.");
+    // Naming the pet and the user's apps up front helps the model spell them right.
+    let vocabulary: String = vocabulary.chars().take(400).collect();
+    let prompt = if vocabulary.is_empty() { format!("Hey {name}.") } else { format!("{vocabulary}. Hey {name}.") };
     let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     p.set_language(Some("fr"));
     p.set_n_threads(threads());
@@ -353,7 +376,7 @@ fn transcribe(ctx: &whisper_rs::WhisperContext, audio: &[f32], name: &str) -> St
 
 struct Mic {
     _stream: cpal::Stream,
-    rx: Receiver<Vec<f32>>,
+    rx: Receiver<(Instant, Vec<f32>)>,
     down: Downsampler,
     name: String,
 }
@@ -364,26 +387,28 @@ fn open_mic() -> Result<Mic, String> {
     let config = device.default_input_config().map_err(|e| format!("micro inutilisable ({e})"))?;
     let channels = config.channels() as usize;
     let rate = config.sample_rate().0;
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let (tx, rx) = mpsc::channel::<(Instant, Vec<f32>)>();
     let mono = move |samples: Vec<f32>| -> Vec<f32> { samples.chunks(channels).map(|c| c.iter().sum::<f32>() / c.len() as f32).collect() };
     let fail = |e| eprintln!("microphone error: {e}");
     let stream_config: cpal::StreamConfig = config.clone().into();
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &stream_config,
-            move |data: &[f32], _: &_| drop(tx.send(mono(data.to_vec()))),
+            move |data: &[f32], _: &_| drop(tx.send((Instant::now(), mono(data.to_vec())))),
             fail,
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
             &stream_config,
-            move |data: &[i16], _: &_| drop(tx.send(mono(data.iter().map(|&s| s as f32 / 32768.0).collect()))),
+            move |data: &[i16], _: &_| drop(tx.send((Instant::now(), mono(data.iter().map(|&s| s as f32 / 32768.0).collect())))),
             fail,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
             &stream_config,
-            move |data: &[u16], _: &_| drop(tx.send(mono(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect()))),
+            move |data: &[u16], _: &_| {
+                drop(tx.send((Instant::now(), mono(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect()))))
+            },
             fail,
             None,
         ),
@@ -396,18 +421,22 @@ fn open_mic() -> Result<Mic, String> {
 }
 
 fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio: &[f32]) {
+    let busy = app.state::<crate::AppState>().thinking.load(Ordering::SeqCst);
     let armed = ears.take_armed();
-    if !armed && !ears.wake.load(Ordering::SeqCst) {
+    // While it's already working on an answer, saying it again would only queue up repeats.
+    if !armed && (busy || !ears.wake.load(Ordering::SeqCst)) {
         return;
     }
-    let name = ears.name.lock().unwrap().clone();
+    let words = ears.name.lock().unwrap().clone();
+    let first = words.first().cloned().unwrap_or_default();
     if armed {
         tell(app, "thinking", "");
     }
-    let text = clean(&transcribe(ctx, audio, &name));
+    let vocabulary = ears.vocabulary.lock().unwrap().clone();
+    let text = clean(&transcribe(ctx, audio, &first, &vocabulary));
     ears.note_heard(&text);
     if armed {
-        let request = after_wake_word(&text, &name).unwrap_or(text);
+        let request = after_any(&text, &words).unwrap_or(text);
         if request.is_empty() {
             tell(app, "idle", "je n'ai rien entendu");
         } else {
@@ -415,7 +444,7 @@ fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio:
         }
         return;
     }
-    let Some(request) = after_wake_word(&text, &name) else { return };
+    let Some(request) = after_any(&text, &words) else { return };
     if request.chars().filter(|c| c.is_alphanumeric()).count() < 2 {
         // Just "Hey Pyrosan": the request comes next.
         ears.arm();
@@ -434,6 +463,7 @@ pub fn start(app: AppHandle) {
     thread::spawn(move || {
         whisper_rs::install_logging_hooks();
         let ears = app.state::<Ears>();
+        *ears.vocabulary.lock().unwrap() = crate::launcher::app_names(30).join(", ");
         let mut model: Option<whisper_rs::WhisperContext> = None;
         let mut mic: Option<Mic> = None;
         let mut vad = Vad::default();
@@ -495,7 +525,9 @@ pub fn start(app: AppHandle) {
             let m = mic.as_mut().unwrap();
             match m.rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(chunk) => {
-                    if ears.speaking.load(Ordering::SeqCst) {
+                    let (captured, chunk) = chunk;
+                    // Audio that waited while a sentence was being understood: too old to act on.
+                    if ears.is_speaking() || captured.elapsed() > Duration::from_secs(4) {
                         vad.reset();
                         continue;
                     }
@@ -539,6 +571,10 @@ mod tests {
         assert_eq!(after_wake_word("et pire aux ans, quel temps fera-t-il", n), None);
         assert_eq!(after_wake_word("Je pense qu'on va faire une partie ce soir.", n), None);
         assert_eq!(after_wake_word("Paris, c'est sympa", n), None);
+        assert_eq!(after_wake_word("Hey mon gars, lance League of Legends.", "mon gars").as_deref(), Some("lance League of Legends."));
+        assert_eq!(after_wake_word("Mon gars ?", "mon gars").as_deref(), Some("?"));
+        assert_eq!(after_any("Et Pyrosan, ça va ?", &["mon gars".into(), "Pyrosan".into()]).as_deref(), Some("ça va ?"));
+        assert_eq!(after_wake_word("On y va les gars", "mon gars"), None);
     }
 
     #[test]

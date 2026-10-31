@@ -40,6 +40,8 @@ pub struct Settings {
     pub voice_pitch: f32,
     /// Always listening for "Hey <name>" (the speech model runs on this computer).
     pub listen: bool,
+    /// What wakes the pet up besides its name, e.g. "mon gars" (comma-separated).
+    pub wake: String,
 }
 
 /// The ElevenLabs voice picked for Pyrosan.
@@ -69,11 +71,12 @@ impl Default for Settings {
             voice_style: "normal".into(),
             voice_pitch: 1.7,
             listen: true,
+            wake: String::new(),
         }
     }
 }
 
-pub const KEYS: &str = "name, skin, model, listen, voice, voiceengine, voicestyle, pitch, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
+pub const KEYS: &str = "name, skin, model, listen, wake, voice, voiceengine, voicestyle, pitch, theme, autostart, elevenkey, elevenvoice, elevenmodel, speed, ontop, limit, motivate";
 
 impl Settings {
     pub fn load(dir: &Path) -> Self {
@@ -99,6 +102,16 @@ impl Settings {
     /// override the user's chosen name, which is kept for the other skins.
     pub fn display_name(&self) -> String {
         crate::chat::persona_name(&self.skin).map(str::to_string).unwrap_or_else(|| self.name.clone())
+    }
+
+    /// What wakes the pet up: the words set with /settings wake, plus its name.
+    pub fn wake_words(&self) -> Vec<String> {
+        let mut words: Vec<String> = self.wake.split(',').map(|w| w.trim().to_string()).filter(|w| !w.is_empty()).collect();
+        let name = self.display_name();
+        if !words.iter().any(|w| w.eq_ignore_ascii_case(&name)) {
+            words.push(name);
+        }
+        words
     }
 
     /// The model chat uses right now: a skin's own character may bring its own.
@@ -206,6 +219,18 @@ impl Settings {
                 } else {
                     "je n'écoute plus (Ctrl+Espace marche toujours)".into()
                 })
+            }
+            "wake" => {
+                if matches!(value, "off" | "aucun" | "none") {
+                    self.wake.clear();
+                    return Ok(format!("je réponds seulement à « {} »", self.display_name()));
+                }
+                let words: Vec<&str> = value.split(',').map(str::trim).filter(|w| !w.is_empty()).collect();
+                if words.is_empty() || words.len() > 4 || words.iter().any(|w| w.chars().count() > 24) {
+                    return Err("ex : /settings wake mon gars, pyrosan (4 au maximum)".into());
+                }
+                self.wake = words.join(", ");
+                Ok(format!("je réponds à « {} »", self.wake_words().join(" » et « ")))
             }
             "voiceengine" => {
                 self.voice_engine = match value.to_lowercase().as_str() {
@@ -407,6 +432,10 @@ mod tests {
         assert!(s.set("elevenmodel", "quality").is_ok());
         assert!(s.listen, "listening is on by default");
         assert!(s.set("listen", "off").is_ok());
+        assert!(s.set("wake", "mon gars, Jarvis").is_ok());
+        assert_eq!(s.wake_words(), ["mon gars", "Jarvis", "Pip"]);
+        assert!(s.set("wake", "off").is_ok());
+        assert_eq!(s.wake_words(), ["Pip"]);
         assert!(!s.listen);
         assert!(s.set("voiceengine", "windows").is_ok());
         assert_eq!(s.voice_engine, "windows");

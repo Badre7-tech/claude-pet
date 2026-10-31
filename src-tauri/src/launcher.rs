@@ -118,6 +118,19 @@ pub fn shortcut_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Up to `max` app names from the Start menu and desktop, shortest first (the main apps).
+pub fn app_names(max: usize) -> Vec<String> {
+    let mut found = Vec::new();
+    for dir in shortcut_dirs() {
+        collect(&dir, 4, &mut found);
+    }
+    let mut names: Vec<String> = found.into_iter().map(|(name, _)| name).collect();
+    names.sort_by_key(|n| n.len());
+    names.dedup();
+    names.truncate(max);
+    names
+}
+
 /// Every .lnk / .url shortcut under `dir`, as (name, path).
 fn collect(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = fs::read_dir(dir) else { return };

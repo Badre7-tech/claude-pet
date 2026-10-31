@@ -162,26 +162,50 @@ function windowsVoice(line: string, turn: number) {
   tts.speak(utterance);
 }
 
+/** Splits off the first sentence, so the voice can start while the rest is being made. */
+function splitFirst(line: string): string[] {
+  const m = line.match(/^(.{15,220}?[.!?…])\s+(\S[\s\S]*)$/);
+  return m ? [m[1], m[2]] : [line];
+}
+
+/** What's left to say if ElevenLabs fails halfway (the Windows voice finishes it). */
+let unspoken = "";
+
+function playClip(buffer: AudioBuffer, last: boolean): Promise<void> {
+  return new Promise((resolve) => {
+    const source = audio!.createBufferSource();
+    source.buffer = buffer;
+    // ElevenLabs can't change its pitch, so cartoon mode plays it a bit faster (and higher).
+    if (cartoon) source.playbackRate.value = 1 + (cartoonPitch - 1) * 0.25;
+    source.connect(audio!.destination);
+    source.onended = () => {
+      if (clip === source) {
+        clip = undefined;
+        if (last) doneTalking();
+      }
+      resolve();
+    };
+    clip = source;
+    muteMic(true);
+    source.start();
+  });
+}
+
 async function elevenVoice(line: string, turn: number) {
-  const mp3 = await ttsAudio(line);
-  if (turn !== voiceTurn) return;
+  const parts = splitFirst(line);
+  unspoken = line;
+  // Both parts are asked for at once; the first plays as soon as it's ready.
+  const pending = parts.map((p) => ttsAudio(p));
+  pending.forEach((p) => p.catch(() => {}));
   audio ??= new AudioContext();
   if (audio.state === "suspended") await audio.resume();
-  const buffer = await audio.decodeAudioData(mp3);
-  if (turn !== voiceTurn) return;
-  const source = audio.createBufferSource();
-  source.buffer = buffer;
-  // ElevenLabs can't change its pitch, so cartoon mode plays it a bit faster (and higher).
-  if (cartoon) source.playbackRate.value = 1 + (cartoonPitch - 1) * 0.25;
-  source.connect(audio.destination);
-  source.onended = () => {
-    if (clip !== source) return;
-    clip = undefined;
-    doneTalking();
-  };
-  clip = source;
-  muteMic(true);
-  source.start();
+  for (const [i, clipBytes] of pending.entries()) {
+    const buffer = await audio.decodeAudioData(await clipBytes);
+    if (turn !== voiceTurn) return;
+    await playClip(buffer, i === parts.length - 1);
+    if (turn !== voiceTurn) return;
+    unspoken = parts.slice(i + 1).join(" ");
+  }
 }
 
 function readAloud(text: string) {
@@ -205,7 +229,7 @@ function readAloud(text: string) {
         lastVoiceProblem = why;
         bubbleText.textContent += `\n\n🔈 ${why} — voix Windows en attendant`;
       }
-      windowsVoice(line, turn);
+      windowsVoice(unspoken || line, turn);
     });
 }
 
@@ -372,6 +396,7 @@ void onListen(({ state, text }) => {
   document.body.classList.toggle("listening", state === "listening");
   if (state === "listening") {
     stopVoice();
+    muteMic(false);
     ding();
     pet.play("wiggle");
     say("🎙️ je t'écoute…", 0);
@@ -389,6 +414,8 @@ void onListen(({ state, text }) => {
 });
 void onHeard((text) => {
   document.body.classList.remove("listening");
+  // A little "ding": it heard its name and understood.
+  ding();
   void talk(text, true);
 });
 

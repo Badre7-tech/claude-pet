@@ -525,7 +525,7 @@ fn apply_settings(app: &AppHandle, s: &Settings) {
     }
     let ears = app.state::<voice_in::Ears>();
     ears.set_wake(s.listen);
-    ears.set_name(s.display_name());
+    ears.set_words(s.wake_words());
     let _ = app.emit("settings", s);
     with_pet(app, |_| ()); // refresh the tray tooltip with the new name
 }
@@ -597,7 +597,7 @@ pub fn run() {
                 thinking: AtomicBool::new(false),
                 briefed: Mutex::new(None),
             });
-            app.manage(voice_in::Ears::new(settings.listen, settings.display_name()));
+            app.manage(voice_in::Ears::new(settings.listen, settings.wake_words()));
             voice_in::start(app.handle().clone());
 
             let window = app
