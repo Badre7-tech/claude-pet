@@ -484,7 +484,6 @@ fn handle(app: &AppHandle, ears: &Ears, ctx: &whisper_rs::WhisperContext, audio:
         return;
     }
     let words = ears.name.lock().unwrap().clone();
-    let first = words.first().cloned().unwrap_or_default();
     if armed {
         tell(app, "thinking", "");
     }
